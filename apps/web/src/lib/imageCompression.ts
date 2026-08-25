@@ -316,17 +316,19 @@ export async function compressImageForStash(
  * `File` (WebP or JPEG). Files already within the limit pass through
  * untouched, preserving their exact bytes and format. Sources above
  * `MAX_COMPRESSIBLE_SOURCE_BYTES` are refused outright — decoding them is
- * the risk, so no amount of output budget makes them safe.
+ * the risk, so no amount of output budget makes them safe. An internally
+ * converted image can provide its original source size when the intermediate
+ * format expands beyond that ceiling.
  */
 export async function compressImageToByteLimit(
   file: File,
   maxBytes: number,
-  options?: { preferredMimeType?: "image/jpeg" },
+  options?: { preferredMimeType?: "image/jpeg"; sourceSizeBytes?: number },
 ): Promise<CompressImageFileResult> {
   if (file.size <= maxBytes) {
     return { ok: true, file, recompressed: false };
   }
-  if (file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) {
+  if ((options?.sourceSizeBytes ?? file.size) > MAX_COMPRESSIBLE_SOURCE_BYTES) {
     return { ok: false, reason: "too-large" };
   }
   // The re-encode loop budgets in data-URL characters. Base64 turns 3 bytes
@@ -378,6 +380,7 @@ export async function prepareImageForAttachment(
   });
   const result = await compressImageToByteLimit(jpeg, maxBytes, {
     preferredMimeType: "image/jpeg",
+    sourceSizeBytes: file.size,
   });
 
   return result.ok ? { ...result, recompressed: true } : result;

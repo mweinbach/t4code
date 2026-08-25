@@ -311,6 +311,25 @@ describe("HEIC attachment preparation", () => {
     expect(fillRect).toHaveBeenCalled();
   });
 
+  it("compresses JPEG intermediates above the source safety ceiling", async () => {
+    const original = new File([new Uint8Array([1, 2, 3])], "large.heic", {
+      type: "image/heic",
+    });
+    mocks.heicTo.mockResolvedValueOnce(
+      new Blob([new Uint8Array(MAX_COMPRESSIBLE_SOURCE_BYTES + 1)], {
+        type: "image/jpeg",
+      }),
+    );
+    const { close } = stubCanvasPipeline(() => 200_000);
+
+    const result = await prepareImageForAttachment(original, 1_000_000);
+
+    expect(result.ok && result.file.name).toBe("large.jpg");
+    expect(result.ok && result.file.type).toBe("image/jpeg");
+    expect(result.ok && result.file.size).toBeLessThanOrEqual(1_000_000);
+    expect(close).toHaveBeenCalled();
+  });
+
   it("reports unreadable when HEIC decoding fails", async () => {
     const original = new File([new Uint8Array([1, 2, 3])], "broken.heic", {
       type: "image/heic",
