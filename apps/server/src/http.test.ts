@@ -23,6 +23,47 @@ import {
 } from "./http.ts";
 
 describe("browser API CORS", () => {
+  it("accepts credentialed API requests from both T4 desktop origins in development", async () => {
+    const routeLayer = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const router = yield* HttpRouter.HttpRouter;
+        yield* router.add("GET", "/api/environment", HttpServerResponse.empty());
+      }),
+    );
+    const configLayer = Layer.effect(
+      ServerConfig.ServerConfig,
+      ServerConfig.ServerConfig.pipe(
+        Effect.map((config) => ({ ...config, devUrl: new URL("http://localhost:5173") })),
+      ),
+    ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "http-t4-cors-test-" })));
+    const appLayer = Layer.merge(routeLayer, browserApiCorsLayer).pipe(
+      Layer.provide(configLayer),
+      Layer.provide(NodeServices.layer),
+    );
+    const { handler, dispose } = HttpRouter.toWebHandler(appLayer, { disableLogger: true });
+
+    try {
+      for (const origin of ["t4code://app", "t4code-dev://app"]) {
+        const response = await handler(
+          new Request("http://localhost:4888/api/environment", {
+            method: "OPTIONS",
+            headers: {
+              origin,
+              "access-control-request-method": "GET",
+              "access-control-request-headers": "authorization",
+            },
+          }),
+        );
+
+        expect(response.status).toBe(204);
+        expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+        expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+      }
+    } finally {
+      await dispose();
+    }
+  });
+
   it("accepts protocol negotiation with authenticated browser headers", async () => {
     const routeLayer = Layer.effectDiscard(
       Effect.gen(function* () {

@@ -189,6 +189,8 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript(), "wait_ready");
     assert.include(buildRemoteLaunchScript(), '"$RUNNER_FILE" serve --host 127.0.0.1');
     assert.include(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
+    assert.include(buildRemoteLaunchScript(), 'DEFAULT_SERVER_HOME="$HOME/.t4"');
+    assert.include(buildRemoteLaunchScript(), 'STATE_DIR="$HOME/.t4/ssh-launch/$STATE_KEY"');
     assert.notInclude(buildRemoteLaunchScript(), "server-home");
     assert.include(buildRemoteLaunchScript(), "Remote T3 server did not become ready");
     assert.include(buildRemoteLaunchScript(), 'wait_ready "60000"');
@@ -200,6 +202,8 @@ describe("ssh tunnel scripts", () => {
       '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
     );
     assert.include(buildRemotePairingScript(target), 'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"');
+    assert.include(buildRemotePairingScript(target), 'DEFAULT_SERVER_HOME="$HOME/.t4"');
+    assert.include(buildRemotePairingScript(target), 'STATE_DIR="$HOME/.t4/ssh-launch/');
     assert.notInclude(buildRemotePairingScript(target), "server-home");
     assert.include(buildRemotePairingScript(target, { packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
@@ -207,6 +211,7 @@ describe("ssh tunnel scripts", () => {
       'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
     );
     assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
+    assert.include(buildRemoteStopScript(target), 'STATE_DIR="$HOME/.t4/ssh-launch/');
     assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
     assert.include(
       buildRemoteLaunchScript(),

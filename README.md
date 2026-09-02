@@ -1,4 +1,18 @@
-# T3 Code
+# T4 Code
+
+Personal fork of [T3 Code](https://github.com/pingdotgg/t3code), based on
+[PR #2829](https://github.com/pingdotgg/t3code/pull/2829)'s
+`t3code/codex-turn-mapping` branch. This fork keeps a small set of changes so
+T4 Code can run alongside the installed T3 Code nightly.
+
+Run `vp i`, then `vp run dev:desktop` for desktop or `vp run dev` for web.
+T4 Code uses `~/.t4` by default; it does not import or migrate `~/.t3`.
+Desktop builds have their own app identity and do not install upstream updates.
+
+See [the fork runbook](docs/operations/t4code.md) for data paths, builds, and
+upstream updates. The remaining documentation below describes upstream T3 Code.
+
+## Upstream T3 Code
 
 T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
 

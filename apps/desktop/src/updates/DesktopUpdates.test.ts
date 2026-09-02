@@ -19,6 +19,36 @@ import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
 describe("DesktopUpdates", () => {
+  it.effect("keeps packaged fork updates disabled across channels and manual actions", () => {
+    const harness = makeHarness({
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false", T3CODE_DISABLE_AUTO_UPDATE: "false" },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        assert.equal((yield* updates.getState).status, "disabled");
+        assert.deepEqual(
+          yield* updates.disabledReason,
+          Option.some("Automatic updates are disabled in T4 Code. Install fork builds manually."),
+        );
+        assert.equal((yield* updates.setChannel("nightly")).enabled, false);
+        assert.equal((yield* updates.check("manual")).checked, false);
+        assert.equal((yield* updates.download).accepted, false);
+        assert.equal((yield* updates.install).accepted, false);
+
+        yield* TestClock.adjust(Duration.millis(15_000));
+        assert.equal(harness.checkCount(), 0);
+        assert.equal(harness.downloadCount(), 0);
+        assert.equal(harness.quitAndInstalls(), 0);
+        assert.equal(harness.listenerCount(), 0);
+        assert.deepEqual(harness.feedUrls(), []);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it("preserves complete causes for update poller and event failures", () => {
     const cause = Cause.combine(
       Cause.fail(new Error("updater failed")),

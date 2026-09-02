@@ -336,6 +336,11 @@ export const make = Effect.gen(function* () {
   );
 
   const resolveDisabledReason = Effect.gen(function* () {
+    if (!config.mockUpdates) {
+      return Option.some(
+        "Automatic updates are disabled in T4 Code. Install fork builds manually.",
+      );
+    }
     const hasFeedConfig = yield* hasUpdateFeedConfig;
     return Option.fromNullishOr(
       getAutoUpdateDisabledReason({
