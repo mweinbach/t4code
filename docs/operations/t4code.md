@@ -42,16 +42,53 @@ vp run dist:desktop:dmg:arm64
 ```
 
 This produces a separate T4 Code application. It does not install or replace
-the existing nightly. Package names, `T3CODE_*` configuration names, wire
-contracts, and provider adapters retain upstream names to minimize fork churn.
+the existing nightly. Workspace package names, `T3CODE_*` configuration names,
+wire contracts, and provider adapters retain upstream names to minimize fork churn.
 React Native mobile and SwiftUI mobile app identities are outside this desktop
 fork change. Remote clients can connect to T4's server as supported by the
 underlying V2 branch.
 
-SSH auto-install and background-service runtime downloads still resolve the
-upstream npm `t3` package. They do not distribute this fork. For remote V2 use,
-run a checkout/build of T4 on that machine and connect to its existing server;
-do not use the upstream installer as a T4 upgrade path.
+## Remote server releases
+
+SSH auto-install and background-service upgrades install the exact T4 GitHub
+release matching the client or requested server version. The release contains
+an npm-installable `@mweinbach/t4code` package with a `t4` executable, bundled
+server, and web client. No npm publishing account is required. An existing
+upstream `t3` executable on the remote host is not used.
+
+For example, the first release can be run directly with:
+
+```sh
+npx --yes --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.1/t4-server.tgz -- t4
+```
+
+The target needs supported Node.js and npm/npx. Native dependencies may need a
+C/C++ build toolchain. Data stays in `~/.t4`. Installing another version changes
+server code without copying or opening the upstream `~/.t3` database.
+
+To release server or client changes, choose a new version such as
+`0.0.38-t4.2`, then:
+
+```sh
+node scripts/update-release-package-versions.ts 0.0.38-t4.2
+git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
+git commit -m 'chore(release): prepare T4 0.0.38-t4.2'
+git push origin t4code
+git tag t4-v0.0.38-t4.2
+git push origin t4-v0.0.38-t4.2
+```
+
+The `T4 server release` workflow builds the server and web client, tests an
+installation of the package, and publishes `t4-server.tgz`. Versions are
+immutable: bump the version instead of replacing a published asset. Wait for
+the release to finish before distributing a desktop or iOS client that expects
+that server version. Exact-version installs never fall back to upstream or a
+different T4 release. Clients without a usable version select the latest
+published T4 release.
+
+The artifact can also be built locally with `vp run --filter t3 build` followed
+by `node scripts/pack-t4-server.ts --out-dir /tmp/t4-release`. Use an empty output
+directory. Official fork artifacts come from the clean GitHub workflow checkout.
 
 ## Follow upstream
 

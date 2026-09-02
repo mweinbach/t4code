@@ -18,10 +18,15 @@ const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
   ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
+        assert.equal(input.command, "npm");
+        assert.equal(
+          input.args.at(-1),
+          "https://github.com/mweinbach/t4code/releases/download/t4-v1.2.3/t4-server.tgz",
+        );
         const prefixIndex = input.args.indexOf("--prefix");
         const stagingDir = input.args[prefixIndex + 1];
         if (stagingDir === undefined) return yield* Effect.die("missing npm --prefix");
-        const entry = path.join(stagingDir, "node_modules", "t3", "dist", "bin.mjs");
+        const entry = path.join(stagingDir, "node_modules", "@mweinbach/t4code", "dist", "bin.mjs");
         yield* fs.makeDirectory(path.dirname(entry), { recursive: true }).pipe(Effect.orDie);
         yield* fs.writeFileString(entry, "export {};\n").pipe(Effect.orDie);
         return {
@@ -38,6 +43,50 @@ const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
   });
 
 it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
+  it.effect("rejects channel names before resolving or installing a runtime", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t4-pinned-version-test-" });
+      const error = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "latest",
+        fs,
+        path,
+        runner: { run: () => Effect.die("unexpected install") },
+        validate: () => Effect.die("unexpected validation"),
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, PinnedRuntimeInstallError);
+      assert.deepEqual(yield* fs.readDirectory(baseDir), []);
+    }),
+  );
+
+  it.effect("replaces an upstream runtime even when its completed version matches", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t4-pinned-upstream-test-" });
+      const paths = pinnedRuntimePaths(path, baseDir, "1.2.3");
+      const upstreamEntry = path.join(paths.versionDir, "node_modules", "t3", "dist", "bin.mjs");
+      yield* fs.makeDirectory(path.dirname(upstreamEntry), { recursive: true });
+      yield* fs.writeFileString(upstreamEntry, "upstream runtime\n");
+      yield* fs.writeFileString(paths.sentinelPath, "1.2.3\n");
+
+      const installed = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "1.2.3",
+        fs,
+        path,
+        runner: successfulRunner(fs, path),
+        validate: () => Effect.void,
+      });
+
+      assert.isFalse(yield* fs.exists(upstreamEntry));
+      assert.isTrue(yield* fs.exists(installed.entryPath));
+      assert.include(installed.entryPath, "node_modules/@mweinbach/t4code/dist/bin.mjs");
+    }),
+  );
+
   it.effect("validates a staging tree before atomically publishing it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

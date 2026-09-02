@@ -4,7 +4,9 @@ import * as NetService from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -13,6 +15,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { collectProcessOutput } from "./command.ts";
 import {
   buildRemoteLaunchScript,
   buildRemotePairingScript,
@@ -27,6 +30,84 @@ import {
 } from "./tunnel.ts";
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
+const TEST_PACKAGE_SPEC =
+  "https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.1/t4-server.tgz";
+const LATEST_PACKAGE_SPEC =
+  "https://github.com/mweinbach/t4code/releases/latest/download/t4-server.tgz";
+
+const executeRemoteRunnerFixture = Effect.fn("executeRemoteRunnerFixture")(function* (
+  packageManager: "npx" | "npm",
+  install: "success" | "missing-bin" | "failed-build",
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t4-ssh-runner-" });
+  const globalBin = path.join(directory, "bin");
+  const packageBin = path.join(directory, "cache", "_npx", "test-package", "node_modules", ".bin");
+  const callsPath = path.join(directory, "package-manager-calls");
+  yield* fs.makeDirectory(globalBin, { recursive: true });
+  yield* fs.makeDirectory(packageBin, { recursive: true });
+  yield* fs.symlink(process.execPath, path.join(globalBin, "node"));
+  yield* fs.symlink("/bin/sh", path.join(globalBin, "sh"));
+  for (const binary of ["t3", "t4"]) {
+    yield* fs.writeFileString(
+      path.join(globalBin, binary),
+      `#!/bin/sh\nprintf 'GLOBAL ${binary}\\n'\nexit 99\n`,
+      {
+        mode: 0o755,
+      },
+    );
+  }
+  yield* fs.writeFileString(
+    path.join(packageBin, "t4"),
+    '#!/bin/sh\nprintf "FORK\\n"\nprintf "%s\\n" "$@"\n',
+    {
+      mode: 0o755,
+    },
+  );
+  yield* fs.writeFileString(
+    path.join(globalBin, packageManager),
+    `#!/bin/sh
+set -eu
+printf 'CALL\\n' >> "$TEST_CALLS_PATH"
+printf '%s\\n' "$@" >> "$TEST_CALLS_PATH"
+while [ "$1" != "--" ]; do shift; done
+shift
+case "$TEST_INSTALL_RESULT" in
+  success) PATH="$TEST_PACKAGE_BIN:$PATH"; export PATH ;;
+  missing-bin) ;;
+  failed-build) printf 'node-pty build failed\\n' >&2; exit 0 ;;
+esac
+exec "$@"
+`,
+    { mode: 0o755 },
+  );
+  const handle = yield* spawner.spawn(
+    ChildProcess.make("/bin/sh", ["-s", "--", "serve", "--base-dir", "/tmp/a b"], {
+      stdin: Stream.make(
+        new TextEncoder().encode(buildRemoteT3RunnerScript({ packageSpec: TEST_PACKAGE_SPEC })),
+      ),
+      cwd: directory,
+      env: {
+        HOME: directory,
+        PATH: globalBin,
+        TEST_CALLS_PATH: callsPath,
+        TEST_PACKAGE_BIN: packageBin,
+        TEST_INSTALL_RESULT: install,
+      },
+    }),
+  );
+  const result = yield* Effect.all(
+    {
+      status: handle.exitCode,
+      stdout: collectProcessOutput(handle.stdout),
+      stderr: collectProcessOutput(handle.stderr),
+    },
+    { concurrency: "unbounded" },
+  );
+  return { ...result, calls: yield* fs.readFileString(callsPath) };
+});
 
 const makeSuccessfulProcess = (stdout: string) => {
   const stdoutStream = Stream.make(new TextEncoder().encode(stdout));
@@ -100,17 +181,83 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 }
 
 describe("ssh tunnel scripts", () => {
-  it("builds the remote t3 runner with npx and npm fallbacks", () => {
+  for (const packageManager of ["npx", "npm"] as const) {
+    it.effect(
+      `runs the fork through ${packageManager} even when global t3 and t4 are installed`,
+      () =>
+        Effect.gen(function* () {
+          const result = yield* executeRemoteRunnerFixture(packageManager, "success");
+
+          assert.equal(result.status, 0, result.stderr);
+          assert.equal(result.stdout, "FORK\nserve\n--base-dir\n/tmp/a b\n");
+          const prefix = packageManager === "npm" ? ["exec"] : [];
+          assert.equal(
+            result.calls,
+            [
+              "CALL",
+              ...prefix,
+              "--yes",
+              "--package",
+              TEST_PACKAGE_SPEC,
+              "--",
+              "sh",
+              "-c",
+              "command -v t4",
+              "CALL",
+              ...prefix,
+              "--yes",
+              "--package",
+              TEST_PACKAGE_SPEC,
+              "--",
+              "t4",
+              "serve",
+              "--base-dir",
+              "/tmp/a b",
+              "",
+            ].join("\n"),
+          );
+        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+
+    it.effect(
+      `rejects a stale global t4 when ${packageManager} does not provide the fork executable`,
+      () =>
+        Effect.gen(function* () {
+          const result = yield* executeRemoteRunnerFixture(packageManager, "missing-bin");
+
+          assert.equal(result.status, 1);
+          assert.equal(result.stdout, "");
+          assert.include(result.stderr, "npm produced no T4 executable in its package cache");
+          assert.equal(result.calls.split("CALL\n").length, 2);
+        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
+
+  it.effect("surfaces a native build failure even when npm incorrectly exits successfully", () =>
+    Effect.gen(function* () {
+      const result = yield* executeRemoteRunnerFixture("npx", "failed-build");
+
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.include(result.stderr, "node-pty build failed");
+      assert.include(result.stderr, "npm produced no T4 executable in its package cache");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it("builds the remote T4 runner with explicit fork packages for npx and npm", () => {
     const script = buildRemoteT3RunnerScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE });
 
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
-    assert.include(script, 'exec t3 "$@"');
-    assert.include(script, "exec npx --yes 't3@latest' \"$@\"");
-    assert.include(script, "exec npm exec --yes 't3@latest' -- \"$@\"");
-    assert.include(script, "could not install 't3@latest'");
-    assert.include(script, "require_installed_t3_cli npx --yes --package 't3@latest'");
-    assert.include(script, "require_installed_t3_cli npm exec --yes --package 't3@latest'");
-    assert.include(script, "npm produced no t3 executable");
+    assert.notInclude(script, 'exec t3 "$@"');
+    assert.notInclude(script, 'exec t4 "$@"');
+    assert.include(script, `exec npx --yes --package '${LATEST_PACKAGE_SPEC}' -- t4 "$@"`);
+    assert.include(script, `exec npm exec --yes --package '${LATEST_PACKAGE_SPEC}' -- t4 "$@"`);
+    assert.include(script, `require_installed_t4_cli npx --yes --package '${LATEST_PACKAGE_SPEC}'`);
+    assert.include(
+      script,
+      `require_installed_t4_cli npm exec --yes --package '${LATEST_PACKAGE_SPEC}'`,
+    );
+    assert.include(script, "npm produced no T4 executable");
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
     assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
     assert.include(script, "remote_node_satisfies_engine()");
@@ -136,18 +283,24 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, TEST_NODE_ENGINE_RANGE);
   });
 
-  it("shell-quotes package specs in the remote t3 runner", () => {
+  it("shell-quotes package specs in the remote T4 runner", () => {
     const script = buildRemoteT3RunnerScript({
-      packageSpec: "t3@nightly; touch /tmp/t3-owned",
+      packageSpec: `${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned`,
     });
 
-    assert.include(script, "exec npx --yes 't3@nightly; touch /tmp/t3-owned' \"$@\"");
-    assert.include(script, "exec npm exec --yes 't3@nightly; touch /tmp/t3-owned' -- \"$@\"");
     assert.include(
       script,
-      "require_installed_t3_cli npx --yes --package 't3@nightly; touch /tmp/t3-owned'",
+      `exec npx --yes --package '${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned' -- t4 "$@"`,
     );
-    assert.notInclude(script, "exec npx --yes t3@nightly; touch /tmp/t3-owned");
+    assert.include(
+      script,
+      `exec npm exec --yes --package '${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned' -- t4 "$@"`,
+    );
+    assert.include(
+      script,
+      `require_installed_t4_cli npx --yes --package '${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned'`,
+    );
+    assert.notInclude(script, `exec npx --yes --package ${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned`);
   });
 
   it("builds the remote t3 runner with a node script override", () => {

@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./t4Release": {
+      "types": "./src/t4Release.ts",
+      "import": "./src/t4Release.ts"
+    },
     "./Array": {
       "types": "./src/Array.ts",
       "import": "./src/Array.ts"

@@ -1,5 +1,4 @@
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import { assert, it } from "@effect/vitest";
@@ -8,13 +7,14 @@ import { hydratePosixHome, resolveBaseDir } from "./os-jank.ts";
 
 it.effect("isolates the default home while preserving explicit data directories", () =>
   Effect.gen(function* () {
+    const path = yield* Path.Path;
     for (const input of [undefined, "", "  "]) {
       const baseDir = yield* resolveBaseDir(input);
-      assert.equal(baseDir, NodePath.join(NodeOS.homedir(), ".t4"));
+      assert.equal(baseDir, path.join(NodeOS.homedir(), ".t4"));
     }
 
     const baseDir = yield* resolveBaseDir("~/custom-t4");
-    assert.equal(baseDir, NodePath.join(NodeOS.homedir(), "custom-t4"));
+    assert.equal(baseDir, path.join(NodeOS.homedir(), "custom-t4"));
   }).pipe(Effect.provide(Path.layer)),
 );
 

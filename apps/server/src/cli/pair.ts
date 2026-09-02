@@ -55,6 +55,8 @@ import {
   resolveHeadlessConnectionString,
 } from "../startupAccess.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
+import { formatNpxCliCommand } from "./invocation.ts";
+import packageJson from "../../package.json" with { type: "json" };
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
@@ -79,7 +81,7 @@ export class NoRunningServerError extends Schema.TaggedErrorClass<NoRunningServe
     return [
       "No running T3 Code server found.",
       ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
-      "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
+      `Start one with \`${formatNpxCliCommand("serve", packageJson.version)}\`, or connect this machine with T3 Connect: \`${formatNpxCliCommand("connect", packageJson.version)}\`.`,
     ].join("\n");
   }
 }

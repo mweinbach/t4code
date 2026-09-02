@@ -1,0 +1,109 @@
+name: T4 server release
+
+on:
+  push:
+    tags:
+      - "t4-v*"
+  workflow_dispatch:
+
+concurrency:
+  group: t4-server-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.repository == 'mweinbach/t4code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+              - --filter=@t3tools/web...
+              - --filter=@t3tools/scripts...
+
+      - name: Check release version and tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./apps/server/package.json').version")
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-t4\.[0-9]+$ ]]; then
+            echo "Expected a T4 fork version such as 0.0.38-t4.1; received $version." >&2
+            exit 1
+          fi
+          tag="t4-v$version"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version $version." >&2
+            exit 1
+          fi
+          if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
+            if [[ "$(git rev-parse "$tag^{commit}")" != "$(git rev-parse HEAD)" ]]; then
+              echo "Tag $tag already belongs to another commit." >&2
+              exit 1
+            fi
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists. Bump the T4 version instead of replacing it." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build server and web client
+        run: vp run --filter t3 build
+
+      - name: Pack server artifact
+        run: node scripts/pack-t4-server.ts --out-dir "$RUNNER_TEMP/t4-release"
+
+      - name: Verify installation and native dependencies
+        shell: bash
+        env:
+          T4_EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/t4-install"
+          npm install --prefix "$install_dir" --no-audit --no-fund "$RUNNER_TEMP/t4-release/t4-server.tgz"
+          installed_version=$("$install_dir/node_modules/.bin/t4" --version)
+          test "$installed_version" = "$T4_EXPECTED_VERSION"
+          node --input-type=module - "$install_dir" <<'JS'
+          import { createRequire } from 'node:module';
+          import path from 'node:path';
+          const require = createRequire(path.join(process.argv[2], 'package.json'));
+          require('node-pty');
+          require('@ff-labs/fff-node');
+          require('msgpackr-extract');
+          JS
+
+      - name: Publish immutable release
+        shell: bash
+        env:
+          T4_RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          T4_RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$T4_RELEASE_TAG" "$RUNNER_TEMP/t4-release/t4-server.tgz" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "T4 Code server $T4_RELEASE_VERSION" \
+            --notes "T4 Code server and web client for version $T4_RELEASE_VERSION, built from $GITHUB_SHA. Install with npx --yes --package https://github.com/$GITHUB_REPOSITORY/releases/download/$T4_RELEASE_TAG/t4-server.tgz t4." \
+            --latest

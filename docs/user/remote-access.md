@@ -1,5 +1,8 @@
 # Remote Access
 
+For this fork's server installation and updates, see [T4 remote servers](t4-remote.md).
+The upstream installation commands below install T3 Code.
+
 Use this when you want to connect to a T3 Code server from another device such as a phone, tablet, or separate desktop app.
 
 ## Quick Pairing for a Running Server

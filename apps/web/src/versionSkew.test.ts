@@ -15,6 +15,7 @@ import {
   dismissVersionMismatch,
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
+  manualServerUpdateCommand,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -104,6 +105,23 @@ describe("versionSkew", () => {
     branding.APP_VERSION = "0.0.34-nightly.20260824.1125";
 
     expect(resolveVersionMismatch("0.0.34-nightly.20260824.1126")).toBeNull();
+  });
+
+  it("warns when a T4 server is behind a T4 client on the same upstream release", () => {
+    branding.APP_VERSION = "0.0.38-t4.2";
+
+    expect(resolveVersionMismatch("0.0.38-t4.1")).toMatchObject({
+      clientVersion: "0.0.38-t4.2",
+      serverVersion: "0.0.38-t4.1",
+    });
+    expect(resolveVersionMismatch("0.0.38-t4.2")).toBeNull();
+    expect(resolveVersionMismatch("0.0.38-t4.3")).toBeNull();
+  });
+
+  it("offers the exact fork release for manual server updates", () => {
+    expect(manualServerUpdateCommand("0.0.38-t4.2")).toBe(
+      "npx --yes --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.2/t4-server.tgz -- t4",
+    );
   });
 
   it("treats a nightly server built past the client as ahead, not skew", () => {

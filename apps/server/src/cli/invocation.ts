@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
+import { getT4ServerPackageSpec, T4_SERVER_BIN } from "@t3tools/shared/t4Release";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -16,7 +17,7 @@ export type CliRunner = "npx" | "pnpm dlx" | "bunx";
  *   bunx     ~/.bun/install/cache/... or $TMPDIR/bunx-<uid>-<spec>/...
  *
  * Global installs and repo checkouts match none of these and return null.
- * Detection is best-effort; callers must fail closed to a plain `t3` command.
+ * Detection is best-effort; callers fall back to the installed `t4` command.
  */
 export function detectCliRunner(entryPath: string): CliRunner | null {
   const path = entryPath.replaceAll("\\", "/");
@@ -37,20 +38,21 @@ export function detectCliRunner(entryPath: string): CliRunner | null {
 }
 
 /**
- * The `t3` package spec to suggest. The literal spec the user typed (e.g.
- * `t3@nightly`) is resolved away before our process starts, so re-derive it
- * from the running version: nightly builds re-suggest the nightly channel,
- * anything else suggests the bare package.
+ * Pin copied commands to the running fork build so starting a second command
+ * cannot silently install a different server implementation.
  */
 export function suggestedPackageSpec(version: string): string {
-  return version.includes("-nightly.") ? "t3@nightly" : "t3";
+  return getT4ServerPackageSpec(version);
+}
+
+export function formatNpxCliCommand(subcommand: string, version: string): string {
+  return `npx --yes --package ${suggestedPackageSpec(version)} -- ${T4_SERVER_BIN} ${subcommand}`;
 }
 
 /**
- * Render a `t3 <subcommand>` suggestion that matches how this process was
- * launched, so copy/pasting it actually works: `npx t3 connect` suggests
- * `npx t3 serve`, a global install suggests `t3 serve`, and a nightly build
- * keeps the `@nightly` tag.
+ * Installed commands use the fork's binary. Commands launched from a package
+ * runner get an explicit package and binary, avoiding npm's name inference for
+ * release tarball URLs.
  */
 export function formatCliCommand(input: {
   readonly subcommand: string;
@@ -59,9 +61,9 @@ export function formatCliCommand(input: {
 }): string {
   const runner = detectCliRunner(input.entryPath);
   if (runner === null) {
-    return `t3 ${input.subcommand}`;
+    return `${T4_SERVER_BIN} ${input.subcommand}`;
   }
-  return `${runner} ${suggestedPackageSpec(input.version)} ${input.subcommand}`;
+  return formatNpxCliCommand(input.subcommand, input.version);
 }
 
 /** `formatCliCommand` against this process's real entry path and version. */

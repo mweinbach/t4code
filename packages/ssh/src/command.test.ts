@@ -99,37 +99,37 @@ describe("ssh command", () => {
     }),
   );
 
-  it.effect("resolves the remote t3 package spec from the desktop release channel", () =>
+  it.effect("pins remote installs to the matching fork release, including development", () =>
     Effect.sync(() => {
       assert.equal(
         resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.17",
+          appVersion: "0.0.38-t4.1",
           updateChannel: "latest",
         }),
-        "t3@0.0.17",
+        "https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.1/t4-server.tgz",
       );
       assert.equal(
         resolveRemoteT3CliPackageSpec({
           appVersion: "0.0.17-nightly.20260415.44",
           updateChannel: "nightly",
         }),
-        "t3@0.0.17-nightly.20260415.44",
+        "https://github.com/mweinbach/t4code/releases/download/t4-v0.0.17-nightly.20260415.44/t4-server.tgz",
       );
       assert.equal(
         resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.0-dev",
+          appVersion: "0.0.38-t4.1",
           updateChannel: "nightly",
           isDevelopment: true,
         }),
-        "t3@nightly",
+        "https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.1/t4-server.tgz",
       );
       assert.equal(
         resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.0-dev",
+          appVersion: "development",
           updateChannel: "latest",
           isDevelopment: true,
         }),
-        "t3@nightly",
+        "https://github.com/mweinbach/t4code/releases/latest/download/t4-server.tgz",
       );
     }),
   );

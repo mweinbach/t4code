@@ -1,6 +1,7 @@
 import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
+import { getT4ServerPackageSpec, T4_SERVER_BIN } from "@t3tools/shared/t4Release";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
@@ -46,7 +47,7 @@ function versionCore(version: string): string {
  * The skew a user can act on: the connected server runs an older T3 Code than
  * this client, so the server is the side that needs updating.
  *
- * Two nightly builds compare their full versions, including the date and run.
+ * Two builds on the same nightly or T4 channel compare their full versions.
  * Other combinations compare their core `major.minor.patch` only, so a stable
  * build and a nightly build with the same core do not cause an update warning.
  * A server ahead of the client does not need an update. Versions that do not
@@ -63,14 +64,15 @@ export function resolveVersionMismatch(
 
   const clientCore = versionCore(normalizedClientVersion);
   const serverCore = versionCore(normalizedServerVersion);
-  const compareNightlyBuilds =
-    parseSemver(normalizedClientVersion)?.prerelease[0] === "nightly" &&
-    parseSemver(normalizedServerVersion)?.prerelease[0] === "nightly";
+  const clientChannel = parseSemver(normalizedClientVersion)?.prerelease[0];
+  const serverChannel = parseSemver(normalizedServerVersion)?.prerelease[0];
+  const compareChannelBuilds =
+    (clientChannel === "nightly" || clientChannel === "t4") && clientChannel === serverChannel;
   const serverIsBehind =
     parseSemver(clientCore) && parseSemver(serverCore)
       ? compareSemverVersions(
-          compareNightlyBuilds ? normalizedServerVersion : serverCore,
-          compareNightlyBuilds ? normalizedClientVersion : clientCore,
+          compareChannelBuilds ? normalizedServerVersion : serverCore,
+          compareChannelBuilds ? normalizedClientVersion : clientCore,
         ) < 0
       : normalizedServerVersion !== normalizedClientVersion;
   if (!serverIsBehind) {
@@ -116,7 +118,7 @@ export function supportsServerUpdateThreadContinuation(
 
 /** The command to hand users whose server cannot update itself. */
 export function manualServerUpdateCommand(targetVersion: string): string {
-  return `npx t3@${targetVersion}`;
+  return `npx --yes --package ${getT4ServerPackageSpec(targetVersion)} -- ${T4_SERVER_BIN}`;
 }
 
 export function serverUpdateGuidance(capability: ServerSelfUpdateCapability): string {
