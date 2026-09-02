@@ -96,12 +96,13 @@ jobs:
           installed_version=$(NO_COLOR=1 "$install_dir/node_modules/.bin/t4" --version)
           printf '%s\n' "$installed_version"
           test "$installed_version" = "t3 v$T4_EXPECTED_VERSION"
+          cd "$install_dir"
           node --input-type=module - "$install_dir" <<'JS'
           import { createRequire } from 'node:module';
           import path from 'node:path';
           const require = createRequire(path.join(process.argv[2], 'package.json'));
           require('node-pty');
-          require('@ff-labs/fff-node');
+          await import('@ff-labs/fff-node');
           require('msgpackr-extract');
           JS
 
