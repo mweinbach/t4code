@@ -229,7 +229,7 @@ describe("t3 pair", () => {
         typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
       );
       assert.include(rendered, "No running T3 Code server found.");
-      const command = `npx --yes --package https://github.com/mweinbach/t4code/releases/download/t4-v${packageJson.version}/t4-server.tgz -- t4`;
+      const command = `npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/mweinbach/t4code/releases/download/t4-v${packageJson.version}/t4-server.tgz -- t4`;
       assert.include(rendered, `${command} serve`);
       assert.include(rendered, `${command} connect`);
     }).pipe(Effect.provide(NodeServices.layer)),

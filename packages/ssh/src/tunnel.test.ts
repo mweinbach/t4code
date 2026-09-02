@@ -30,6 +30,7 @@ import {
 } from "./tunnel.ts";
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
+const TEST_INSTALL_FLAGS = "--allow-scripts=node-pty,msgpackr-extract";
 const TEST_PACKAGE_SPEC =
   "https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.1/t4-server.tgz";
 const LATEST_PACKAGE_SPEC =
@@ -197,6 +198,7 @@ describe("ssh tunnel scripts", () => {
               "CALL",
               ...prefix,
               "--yes",
+              TEST_INSTALL_FLAGS,
               "--package",
               TEST_PACKAGE_SPEC,
               "--",
@@ -206,6 +208,7 @@ describe("ssh tunnel scripts", () => {
               "CALL",
               ...prefix,
               "--yes",
+              TEST_INSTALL_FLAGS,
               "--package",
               TEST_PACKAGE_SPEC,
               "--",
@@ -250,12 +253,21 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
     assert.notInclude(script, 'exec t3 "$@"');
     assert.notInclude(script, 'exec t4 "$@"');
-    assert.include(script, `exec npx --yes --package '${LATEST_PACKAGE_SPEC}' -- t4 "$@"`);
-    assert.include(script, `exec npm exec --yes --package '${LATEST_PACKAGE_SPEC}' -- t4 "$@"`);
-    assert.include(script, `require_installed_t4_cli npx --yes --package '${LATEST_PACKAGE_SPEC}'`);
     assert.include(
       script,
-      `require_installed_t4_cli npm exec --yes --package '${LATEST_PACKAGE_SPEC}'`,
+      `exec npx --yes ${TEST_INSTALL_FLAGS} --package '${LATEST_PACKAGE_SPEC}' -- t4 "$@"`,
+    );
+    assert.include(
+      script,
+      `exec npm exec --yes ${TEST_INSTALL_FLAGS} --package '${LATEST_PACKAGE_SPEC}' -- t4 "$@"`,
+    );
+    assert.include(
+      script,
+      `require_installed_t4_cli npx --yes ${TEST_INSTALL_FLAGS} --package '${LATEST_PACKAGE_SPEC}'`,
+    );
+    assert.include(
+      script,
+      `require_installed_t4_cli npm exec --yes ${TEST_INSTALL_FLAGS} --package '${LATEST_PACKAGE_SPEC}'`,
     );
     assert.include(script, "npm produced no T4 executable");
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
@@ -290,17 +302,20 @@ describe("ssh tunnel scripts", () => {
 
     assert.include(
       script,
-      `exec npx --yes --package '${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned' -- t4 "$@"`,
+      `exec npx --yes ${TEST_INSTALL_FLAGS} --package '${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned' -- t4 "$@"`,
     );
     assert.include(
       script,
-      `exec npm exec --yes --package '${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned' -- t4 "$@"`,
+      `exec npm exec --yes ${TEST_INSTALL_FLAGS} --package '${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned' -- t4 "$@"`,
     );
     assert.include(
       script,
-      `require_installed_t4_cli npx --yes --package '${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned'`,
+      `require_installed_t4_cli npx --yes ${TEST_INSTALL_FLAGS} --package '${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned'`,
     );
-    assert.notInclude(script, `exec npx --yes --package ${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned`);
+    assert.notInclude(
+      script,
+      `exec npx --yes ${TEST_INSTALL_FLAGS} --package ${TEST_PACKAGE_SPEC}; touch /tmp/t4-owned`,
+    );
   });
 
   it("builds the remote t3 runner with a node script override", () => {

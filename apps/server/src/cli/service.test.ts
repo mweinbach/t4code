@@ -45,7 +45,7 @@ it("reports the installed service version and host paths", () => {
 it("gives a direct repair command for a stale service", () => {
   assert.include(
     formatServiceStatus({ ...status, current: false }, "0.0.29"),
-    "Next: Run `npx --yes --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.29/t4-server.tgz -- t4 service update`.",
+    "Next: Run `npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.29/t4-server.tgz -- t4 service update`.",
   );
 });
 
@@ -65,7 +65,7 @@ it("reports a newer installed service and gives an exact-version repair command"
   assert.include(output, "t3@0.0.32-nightly.1 (newer than this t3@0.0.31 CLI)");
   assert.include(
     output,
-    "npx --yes --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.32-nightly.1/t4-server.tgz -- t4 service update",
+    "npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.32-nightly.1/t4-server.tgz -- t4 service update",
   );
   assert.notInclude(output, "npx t3@latest service update");
 });

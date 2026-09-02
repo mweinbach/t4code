@@ -9,7 +9,11 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
-import { getT4ServerPackageSpec, T4_SERVER_BIN } from "@t3tools/shared/t4Release";
+import {
+  getT4ServerPackageSpec,
+  T4_NPX_INSTALL_FLAGS,
+  T4_SERVER_BIN,
+} from "@t3tools/shared/t4Release";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -444,12 +448,12 @@ require_installed_t4_cli() {
   return 1
 }
 if command -v npx >/dev/null 2>&1; then
-  require_installed_t4_cli npx --yes --package @@T3_PACKAGE_SPEC@@ || exit 1
-  exec npx --yes --package @@T3_PACKAGE_SPEC@@ -- @@T4_SERVER_BIN@@ "$@"
+  require_installed_t4_cli npx --yes @@T4_NPX_INSTALL_FLAGS@@ --package @@T3_PACKAGE_SPEC@@ || exit 1
+  exec npx --yes @@T4_NPX_INSTALL_FLAGS@@ --package @@T3_PACKAGE_SPEC@@ -- @@T4_SERVER_BIN@@ "$@"
 fi
 if command -v npm >/dev/null 2>&1; then
-  require_installed_t4_cli npm exec --yes --package @@T3_PACKAGE_SPEC@@ || exit 1
-  exec npm exec --yes --package @@T3_PACKAGE_SPEC@@ -- @@T4_SERVER_BIN@@ "$@"
+  require_installed_t4_cli npm exec --yes @@T4_NPX_INSTALL_FLAGS@@ --package @@T3_PACKAGE_SPEC@@ || exit 1
+  exec npm exec --yes @@T4_NPX_INSTALL_FLAGS@@ --package @@T3_PACKAGE_SPEC@@ -- @@T4_SERVER_BIN@@ "$@"
 fi
 printf 'Remote host could not install %s because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' @@T3_PACKAGE_SPEC@@ >&2
 exit 1
@@ -661,6 +665,7 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
       T3_PACKAGE_SPEC: packageSpec,
       T4_SERVER_BIN,
+      T4_NPX_INSTALL_FLAGS,
       T3_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
       T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     }),

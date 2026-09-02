@@ -1,7 +1,11 @@
 import * as Effect from "effect/Effect";
 
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
-import { getT4ServerPackageSpec, T4_SERVER_BIN } from "@t3tools/shared/t4Release";
+import {
+  getT4ServerPackageSpec,
+  T4_NPX_INSTALL_FLAGS,
+  T4_SERVER_BIN,
+} from "@t3tools/shared/t4Release";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -46,7 +50,7 @@ export function suggestedPackageSpec(version: string): string {
 }
 
 export function formatNpxCliCommand(subcommand: string, version: string): string {
-  return `npx --yes --package ${suggestedPackageSpec(version)} -- ${T4_SERVER_BIN} ${subcommand}`;
+  return `npx --yes ${T4_NPX_INSTALL_FLAGS} --package ${suggestedPackageSpec(version)} -- ${T4_SERVER_BIN} ${subcommand}`;
 }
 
 /**

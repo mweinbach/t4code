@@ -59,7 +59,7 @@ upstream `t3` executable on the remote host is not used.
 For example, the first release can be run directly with:
 
 ```sh
-npx --yes --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.1/t4-server.tgz -- t4
+npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.1/t4-server.tgz -- t4
 ```
 
 The target needs supported Node.js and npm/npx. Native dependencies may need a

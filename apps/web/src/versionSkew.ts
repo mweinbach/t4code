@@ -1,7 +1,11 @@
 import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
-import { getT4ServerPackageSpec, T4_SERVER_BIN } from "@t3tools/shared/t4Release";
+import {
+  getT4ServerPackageSpec,
+  T4_NPX_INSTALL_FLAGS,
+  T4_SERVER_BIN,
+} from "@t3tools/shared/t4Release";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
@@ -118,7 +122,7 @@ export function supportsServerUpdateThreadContinuation(
 
 /** The command to hand users whose server cannot update itself. */
 export function manualServerUpdateCommand(targetVersion: string): string {
-  return `npx --yes --package ${getT4ServerPackageSpec(targetVersion)} -- ${T4_SERVER_BIN}`;
+  return `npx --yes ${T4_NPX_INSTALL_FLAGS} --package ${getT4ServerPackageSpec(targetVersion)} -- ${T4_SERVER_BIN}`;
 }
 
 export function serverUpdateGuidance(capability: ServerSelfUpdateCapability): string {

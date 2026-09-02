@@ -2,6 +2,8 @@ export const T4_RELEASE_REPOSITORY = "mweinbach/t4code";
 export const T4_SERVER_PACKAGE_NAME = "@mweinbach/t4code";
 export const T4_SERVER_BIN = "t4";
 export const T4_SERVER_ASSET_NAME = "t4-server.tgz";
+export const T4_NATIVE_INSTALL_SCRIPTS = ["node-pty", "msgpackr-extract"] as const;
+export const T4_NPX_INSTALL_FLAGS = `--allow-scripts=${T4_NATIVE_INSTALL_SCRIPTS.join(",")}`;
 
 const NUMBER = "(?:0|[1-9]\\d*)";
 const PRERELEASE = `(?:${NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;

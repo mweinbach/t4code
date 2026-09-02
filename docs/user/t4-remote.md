@@ -9,7 +9,7 @@ To run a T4 server directly, use the package for your client's version. For
 version `0.0.38-t4.1`:
 
 ```sh
-npx --yes --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.1/t4-server.tgz -- t4 serve
+npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.1/t4-server.tgz -- t4 serve
 ```
 
 Use the printed pairing link or QR code to connect your matching desktop or iOS

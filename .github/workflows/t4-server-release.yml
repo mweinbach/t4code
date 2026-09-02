@@ -82,9 +82,20 @@ jobs:
         run: |
           set -euo pipefail
           install_dir="$RUNNER_TEMP/t4-install"
+          mkdir -p "$install_dir"
+          node --input-type=module - "$install_dir" <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { T4_NATIVE_INSTALL_SCRIPTS } from './packages/shared/src/t4Release.ts';
+          fs.writeFileSync(path.join(process.argv[2], 'package.json'), JSON.stringify({
+            private: true,
+            allowScripts: Object.fromEntries(T4_NATIVE_INSTALL_SCRIPTS.map(name => [name, true])),
+          }));
+          JS
           npm install --prefix "$install_dir" --no-audit --no-fund "$RUNNER_TEMP/t4-release/t4-server.tgz"
-          installed_version=$("$install_dir/node_modules/.bin/t4" --version)
-          test "$installed_version" = "$T4_EXPECTED_VERSION"
+          installed_version=$(NO_COLOR=1 "$install_dir/node_modules/.bin/t4" --version)
+          printf '%s\n' "$installed_version"
+          test "$installed_version" = "t3 v$T4_EXPECTED_VERSION"
           node --input-type=module - "$install_dir" <<'JS'
           import { createRequire } from 'node:module';
           import path from 'node:path';
@@ -105,5 +116,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "T4 Code server $T4_RELEASE_VERSION" \
-            --notes "T4 Code server and web client for version $T4_RELEASE_VERSION, built from $GITHUB_SHA. Install with npx --yes --package https://github.com/$GITHUB_REPOSITORY/releases/download/$T4_RELEASE_TAG/t4-server.tgz t4." \
+            --notes "T4 Code server and web client for version $T4_RELEASE_VERSION, built from $GITHUB_SHA. Install with npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/$GITHUB_REPOSITORY/releases/download/$T4_RELEASE_TAG/t4-server.tgz -- t4." \
             --latest

@@ -5,7 +5,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
-import { getT4ServerPackageSpec, T4_SERVER_PACKAGE_NAME } from "@t3tools/shared/t4Release";
+import {
+  getT4ServerPackageSpec,
+  T4_NATIVE_INSTALL_SCRIPTS,
+  T4_SERVER_PACKAGE_NAME,
+} from "@t3tools/shared/t4Release";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { isExactServiceVersion } from "./serviceProtocol.ts";
@@ -19,6 +23,17 @@ import { isExactServiceVersion } from "./serviceProtocol.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
+const pinnedInstallPackageJson = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      private: Schema.Boolean,
+      allowScripts: Schema.Record(Schema.String, Schema.Boolean),
+    }),
+  ),
+)({
+  private: true,
+  allowScripts: Object.fromEntries(T4_NATIVE_INSTALL_SCRIPTS.map((name) => [name, true])),
+});
 // Boot-service setup and remote update can construct separate layers. Serialize
 // the complete install transaction across every caller in this process.
 const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
@@ -161,6 +176,17 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   };
 
   return yield* Effect.gen(function* () {
+    yield* fs
+      .writeFileString(input.path.join(stagingDir, "package.json"), `${pinnedInstallPackageJson}\n`)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PinnedRuntimeInstallError({
+              step: "preparing native dependency installation",
+              cause,
+            }),
+        ),
+      );
     const installStep = "installing the pinned T4 runtime (this can take a few minutes)";
     yield* runner
       .run({

@@ -59,7 +59,7 @@ it("formats serve suggestions to match the launching command", () => {
       entryPath: "/home/theo/.npm/_npx/abc/node_modules/t3/dist/bin.mjs",
       version: "0.0.31-nightly.20260729",
     }),
-    "npx --yes --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.31-nightly.20260729/t4-server.tgz -- t4 serve",
+    "npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.31-nightly.20260729/t4-server.tgz -- t4 serve",
   );
   assert.equal(
     formatCliCommand({
@@ -67,7 +67,7 @@ it("formats serve suggestions to match the launching command", () => {
       entryPath: "/tmp/bunx-1000-t3@latest/node_modules/t3/dist/bin.mjs",
       version: "0.0.31",
     }),
-    "npx --yes --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.31/t4-server.tgz -- t4 serve",
+    "npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.31/t4-server.tgz -- t4 serve",
   );
   assert.equal(
     formatCliCommand({

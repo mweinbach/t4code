@@ -120,7 +120,7 @@ describe("versionSkew", () => {
 
   it("offers the exact fork release for manual server updates", () => {
     expect(manualServerUpdateCommand("0.0.38-t4.2")).toBe(
-      "npx --yes --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.2/t4-server.tgz -- t4",
+      "npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/mweinbach/t4code/releases/download/t4-v0.0.38-t4.2/t4-server.tgz -- t4",
     );
   });
 

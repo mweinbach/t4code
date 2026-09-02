@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -26,6 +27,17 @@ const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
         const prefixIndex = input.args.indexOf("--prefix");
         const stagingDir = input.args[prefixIndex + 1];
         if (stagingDir === undefined) return yield* Effect.die("missing npm --prefix");
+        const installManifest = yield* fs
+          .readFileString(path.join(stagingDir, "package.json"))
+          .pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))),
+            Effect.orDie,
+          );
+        assert.deepEqual(installManifest, {
+          private: true,
+          allowScripts: { "node-pty": true, "msgpackr-extract": true },
+        });
+        assert.isFalse(input.args.some((argument) => argument.startsWith("--allow-scripts")));
         const entry = path.join(stagingDir, "node_modules", "@mweinbach/t4code", "dist", "bin.mjs");
         yield* fs.makeDirectory(path.dirname(entry), { recursive: true }).pipe(Effect.orDie);
         yield* fs.writeFileString(entry, "export {};\n").pipe(Effect.orDie);
