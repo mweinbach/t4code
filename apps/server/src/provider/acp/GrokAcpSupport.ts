@@ -22,7 +22,7 @@ const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 
 type GrokAcpRuntimeGrokSettings = Pick<GrokSettings, "binaryPath">;
 
-interface GrokAcpRuntimeInput extends Omit<
+export interface GrokAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   "authMethodId" | "clientCapabilities" | "spawn"
 > {
@@ -92,6 +92,27 @@ export const makeGrokAcpRuntime = (
   EffectAcpErrors.AcpError,
   Crypto.Crypto | Scope.Scope
 > =>
+  makeXAiAcpRuntime({
+    ...input,
+    spawn: buildGrokAcpSpawnInput(
+      input.grokSettings,
+      input.cwd,
+      input.environment,
+      input.runtimeMode,
+    ),
+    authMethodId: resolveGrokAuthMethodId(input.environment),
+  });
+
+/** Shared ACP lifecycle for Grok-compatible CLIs with their own launch and authentication policy. */
+export const makeXAiAcpRuntime = (
+  input: AcpSessionRuntime.AcpSessionRuntimeOptions & {
+    readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  },
+): Effect.Effect<
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
+  EffectAcpErrors.AcpError,
+  Crypto.Crypto | Scope.Scope
+> =>
   Effect.gen(function* () {
     const processGroupPlatform = yield* HostProcessPlatform.pipe(
       Effect.provide(NodeServices.layer),
@@ -99,13 +120,6 @@ export const makeGrokAcpRuntime = (
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
-        spawn: buildGrokAcpSpawnInput(
-          input.grokSettings,
-          input.cwd,
-          input.environment,
-          input.runtimeMode,
-        ),
-        authMethodId: resolveGrokAuthMethodId(input.environment),
         // Current Grok treats Ctrl+C cancellation as a barrier against stale
         // background-task wake prompts until the next genuine user turn.
         cancelMeta: { ...input.cancelMeta, cancelTrigger: "ctrl_c" },

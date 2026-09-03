@@ -486,7 +486,11 @@ const make = Effect.gen(function* () {
         { readonly type: "message.dispatch" }
       >["dispatchMode"];
       if (input.mode === "steer" || input.mode === "restart") {
-        if (steerableRun === undefined) {
+        // Retry the original run even after it settles. The dispatcher checks
+        // the durable command receipt before evaluating live steering policy.
+        const existingMessage = target.messages.find((message) => message.id === input.messageId);
+        const targetRunId = existingMessage?.runId ?? steerableRun?.id;
+        if (targetRunId === undefined) {
           return yield* new ThreadManagementNoSteerableRunError({
             threadId: input.threadId,
             mode: input.mode,
@@ -494,7 +498,7 @@ const make = Effect.gen(function* () {
         }
         dispatchMode = {
           type: input.mode === "steer" ? "steer_active" : "restart_active",
-          targetRunId: steerableRun.id,
+          targetRunId,
         };
       } else if (input.mode === "auto" && steerableRun !== undefined) {
         dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };

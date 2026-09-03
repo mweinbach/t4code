@@ -15,6 +15,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -61,6 +62,7 @@ import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2TurnInput,
+  type ProviderAdapterV2SteerInput,
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import {
@@ -82,6 +84,7 @@ import {
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
   type AcpAdapterV2SubagentUpdate,
+  type AcpAdapterV2SteerInput,
 } from "./AcpAdapterV2.ts";
 
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -694,7 +697,417 @@ function makeTurnInput(input: {
   };
 }
 
+const makeNativeSteerHarness = Effect.fn("makeNativeSteerHarness")(function* (
+  supportsSteering = true,
+  beforeAttachmentRead: Effect.Effect<void> = Effect.void,
+  options: {
+    readonly enablePostSettleContinuation?: boolean;
+    readonly steerAcknowledgement?: Effect.Effect<void>;
+  } = {},
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const serverConfig = yield* ServerConfig;
+  const path = yield* Path.Path;
+  const promptStarted = yield* Deferred.make<void>();
+  const promptFinished = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+  const sessionUpdate =
+    yield* Deferred.make<
+      Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+    >();
+  const calls: Array<AcpAdapterV2SteerInput> = [];
+  const continuationRequests = yield* Queue.unbounded<ProviderContinuationRequest>();
+  const counts = { runtime: 0, prompt: 0, cancel: 0 };
+  const instanceId = ProviderInstanceId.make("acp-test-native-steer");
+  const adapter = makeAcpAdapterV2({
+    crypto: yield* Crypto.Crypto,
+    instanceId,
+    flavor: {
+      driver: ACP_TEST_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      supportsImagePrompts: true,
+      enablePostSettleContinuation: options.enablePostSettleContinuation ?? false,
+      deferFinalizeForBackgroundWork: options.enablePostSettleContinuation ?? false,
+      ...(supportsSteering
+        ? {
+            steerTurn: (input: AcpAdapterV2SteerInput) =>
+              Effect.sync(() => {
+                calls.push(input);
+              }).pipe(Effect.andThen(options.steerAcknowledgement ?? Effect.void)),
+          }
+        : {}),
+      makeRuntime: makeMockRuntime({
+        childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        mockAgentPath: yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        ),
+        wrapRuntime: (runtime) => {
+          counts.runtime += 1;
+          return {
+            ...runtime,
+            handleSessionUpdate: (handler) =>
+              Deferred.succeed(sessionUpdate, handler).pipe(
+                Effect.andThen(runtime.handleSessionUpdate(handler)),
+              ),
+            prompt: () =>
+              Effect.gen(function* () {
+                counts.prompt += 1;
+                yield* Deferred.succeed(promptStarted, undefined);
+                return yield* Deferred.await(promptFinished);
+              }),
+            cancel: Effect.sync(() => {
+              counts.cancel += 1;
+            }),
+          };
+        },
+      }),
+    },
+    fileSystem: {
+      ...fileSystem,
+      readFile: (path) => beforeAttachmentRead.pipe(Effect.andThen(fileSystem.readFile(path))),
+    },
+    idAllocator: yield* IdAllocatorV2,
+    serverConfig,
+    continuationRequests: {
+      offer: (request) => Queue.offer(continuationRequests, request).pipe(Effect.asVoid),
+    },
+  });
+  const threadId = ThreadId.make("thread-acp-native-steer");
+  const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: process.cwd(),
+  });
+  const modelSelection = { instanceId, model: "default" } as const;
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-acp-native-steer"),
+    modelSelection,
+    runtimePolicy,
+  });
+  const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+  yield* runtime.events.pipe(
+    Stream.runForEach((event) => Queue.offer(events, event)),
+    Effect.forkScoped,
+  );
+  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+  const turnInput = makeTurnInput({
+    threadId,
+    providerThread,
+    instanceId,
+    runtimePolicy,
+    now: yield* DateTime.now,
+  });
+  yield* runtime.startTurn(turnInput);
+  yield* Deferred.await(promptStarted);
+  const started = yield* Stream.fromQueue(events).pipe(
+    Stream.filter((event) => event.type === "provider_turn.updated"),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+  const steerInput: ProviderAdapterV2SteerInput = {
+    threadId,
+    runId: turnInput.runId,
+    providerThread,
+    providerTurnId: started.providerTurn.id,
+    message: {
+      ...turnInput.message,
+      messageId: MessageId.make("native-steering-message"),
+      text: "Use the new acceptance criteria",
+    },
+  };
+  return {
+    runtime,
+    calls,
+    counts,
+    events,
+    promptFinished,
+    steerInput,
+    turnInput,
+    serverConfig,
+    continuationRequests,
+    sessionUpdate: yield* Deferred.await(sessionUpdate),
+  };
+});
+
 describe("AcpAdapterV2", () => {
+  it.live("native steering retains the active prompt and snapshots text and image input", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeNativeSteerHarness();
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.makeDirectory(harness.serverConfig.attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        NodePath.join(harness.serverConfig.attachmentsDir, "steer-image.png"),
+        "image bytes",
+      );
+      const steerInput = {
+        ...harness.steerInput,
+        message: {
+          ...harness.steerInput.message,
+          attachments: [
+            {
+              type: "image" as const,
+              id: "steer-image",
+              name: "steer-image.png",
+              mimeType: "image/png",
+              sizeBytes: 11,
+            },
+          ],
+        },
+      };
+      yield* harness.runtime.steerTurn(steerInput);
+      assert.equal(harness.calls.length, 1);
+      assert.equal(harness.calls[0]!.sessionId, "mock-session-1");
+      assert.equal(harness.calls[0]!.interjectionId, String(steerInput.message.messageId));
+      assert.deepEqual(harness.calls[0]!.content, [
+        {
+          type: "text",
+          text: `${steerInput.message.text}\n\n[Attached image "steer-image.png" is saved at: ${NodePath.join(harness.serverConfig.attachmentsDir, "steer-image.png")}]`,
+        },
+        {
+          type: "image",
+          data: Buffer.from("image bytes").toString("base64"),
+          mimeType: "image/png",
+        },
+      ]);
+      assert.deepEqual(harness.counts, { runtime: 1, prompt: 1, cancel: 0 });
+      yield* harness.sessionUpdate({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: steerInput.message.text },
+        },
+      });
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: steerInput.providerThread,
+      });
+      assert.deepEqual(
+        snapshot.providerTurns.map((turn) => [turn.id, turn.status]),
+        [[steerInput.providerTurnId, "running"]],
+      );
+      const message = snapshot.messages.find(
+        (candidate) => candidate.id === steerInput.message.messageId,
+      );
+      assert.equal(snapshot.messages.filter((candidate) => candidate.role === "user").length, 2);
+      assert.equal(message?.text, steerInput.message.text);
+      assert.equal(message?.runId, harness.turnInput.runId);
+      assert.equal(message?.nodeId, harness.turnInput.rootNodeId);
+      assert.deepEqual(message?.attachments, steerInput.message.attachments);
+      yield* Deferred.succeed(harness.promptFinished, { stopReason: "end_turn" });
+      const terminal = yield* Stream.fromQueue(harness.events).pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.equal(terminal.providerTurnId, steerInput.providerTurnId);
+      assert.equal(terminal.status, "completed");
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.live("native steering rejects stale runs, threads, turns, and completed prompts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeNativeSteerHarness();
+      const { steerInput } = harness;
+      for (const staleInput of [
+        { ...steerInput, runId: RunId.make("stale-run") },
+        { ...steerInput, threadId: ThreadId.make("other-thread") },
+        { ...steerInput, providerTurnId: ProviderTurnId.make("stale-turn") },
+        {
+          ...steerInput,
+          providerThread: {
+            ...steerInput.providerThread,
+            id: ProviderThreadId.make("other-provider-thread"),
+          },
+        },
+        {
+          ...steerInput,
+          providerThread: {
+            ...steerInput.providerThread,
+            nativeThreadRef: {
+              driver: ACP_TEST_DRIVER,
+              nativeId: "other-session",
+              strength: "strong" as const,
+            },
+          },
+        },
+      ]) {
+        const result = yield* harness.runtime.steerTurn(staleInput).pipe(Effect.flip);
+        assert.equal(result._tag, "ProviderAdapterSteerRunError");
+      }
+      assert.lengthOf(harness.calls, 0);
+      yield* Deferred.succeed(harness.promptFinished, { stopReason: "end_turn" });
+      yield* Stream.fromQueue(harness.events).pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      const completed = yield* harness.runtime.steerTurn(steerInput).pipe(Effect.flip);
+      assert.equal(completed._tag, "ProviderAdapterSteerRunError");
+      assert.lengthOf(harness.calls, 0);
+      assert.deepEqual(harness.counts, { runtime: 1, prompt: 1, cancel: 0 });
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: steerInput.providerThread,
+      });
+      assert.isFalse(
+        snapshot.messages.some((message) => message.id === steerInput.message.messageId),
+      );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.live("ACP providers without a native steering hook still report unsupported", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeNativeSteerHarness(false);
+      const result = yield* harness.runtime.steerTurn(harness.steerInput).pipe(Effect.flip);
+      assert.equal(result._tag, "ProviderAdapterSteerRunUnsupportedError");
+      assert.deepEqual(harness.counts, { runtime: 1, prompt: 1, cancel: 0 });
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.live("native steering rechecks the active prompt after reading an attachment", () =>
+    Effect.gen(function* () {
+      const readStarted = yield* Deferred.make<void>();
+      const releaseRead = yield* Deferred.make<void>();
+      const harness = yield* makeNativeSteerHarness(
+        true,
+        Deferred.succeed(readStarted, undefined).pipe(Effect.andThen(Deferred.await(releaseRead))),
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.makeDirectory(harness.serverConfig.attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        NodePath.join(harness.serverConfig.attachmentsDir, "late-image.png"),
+        "image bytes",
+      );
+      const steering = yield* harness.runtime
+        .steerTurn({
+          ...harness.steerInput,
+          message: {
+            ...harness.steerInput.message,
+            attachments: [
+              {
+                type: "image",
+                id: "late-image",
+                name: "late-image.png",
+                mimeType: "image/png",
+                sizeBytes: 11,
+              },
+            ],
+          },
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(readStarted);
+      yield* Deferred.succeed(harness.promptFinished, { stopReason: "end_turn" });
+      yield* Stream.fromQueue(harness.events).pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      yield* Deferred.succeed(releaseRead, undefined);
+      assert.equal((yield* Fiber.join(steering))._tag, "ProviderAdapterSteerRunError");
+      assert.lengthOf(harness.calls, 0);
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect(
+    "native steering preserves idle fallback output when the prompt finishes before acknowledgement",
+    () =>
+      Effect.gen(function* () {
+        const steerSent = yield* Deferred.make<void>();
+        const acknowledgeSteer = yield* Deferred.make<void>();
+        const finalizing = yield* Deferred.make<void>();
+        const releaseFinalization = yield* Deferred.make<void>();
+        const baseClock = yield* Clock.Clock;
+        let blockNextClockRead = false;
+        const blockingClock: Clock.Clock = {
+          ...baseClock,
+          currentTimeMillis: Effect.suspend(() => {
+            if (!blockNextClockRead) return baseClock.currentTimeMillis;
+            blockNextClockRead = false;
+            return Deferred.succeed(finalizing, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseFinalization)),
+              Effect.andThen(baseClock.currentTimeMillis),
+            );
+          }),
+        };
+        yield* Effect.gen(function* () {
+          const harness = yield* makeNativeSteerHarness(true, Effect.void, {
+            enablePostSettleContinuation: true,
+            steerAcknowledgement: Deferred.succeed(steerSent, undefined).pipe(
+              Effect.andThen(Deferred.await(acknowledgeSteer)),
+            ),
+          });
+          const steering = yield* harness.runtime
+            .steerTurn(harness.steerInput)
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(steerSent);
+          blockNextClockRead = true;
+          yield* Deferred.succeed(harness.promptFinished, { stopReason: "end_turn" });
+          yield* Deferred.await(finalizing);
+          const fallbackUpdate = (text: string): EffectAcpSchema.SessionNotification => ({
+            sessionId: "mock-session-1",
+            _meta: { promptId: "interject-fallback-native-turn" },
+            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+          });
+          // Native fallback output races the finalized-but-still-active window.
+          const firstChunk = yield* harness
+            .sessionUpdate(fallbackUpdate("Fallback response "))
+            .pipe(Effect.forkScoped);
+          yield* Deferred.succeed(releaseFinalization, undefined);
+          yield* Fiber.join(firstChunk);
+          const originalTerminal = yield* Stream.fromQueue(harness.events).pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          );
+          assert.equal(originalTerminal.providerTurnId, harness.steerInput.providerTurnId);
+          assert.equal(originalTerminal.status, "completed");
+          const continuation = yield* Queue.take(harness.continuationRequests);
+          assert.equal(continuation.threadId, harness.turnInput.threadId);
+          assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+          const continuationInput = makeTurnInput({
+            threadId: harness.turnInput.threadId,
+            providerThread: harness.turnInput.providerThread,
+            instanceId: harness.turnInput.modelSelection.instanceId,
+            runtimePolicy: harness.turnInput.runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          });
+          const attach = yield* harness.runtime
+            .startTurn(continuationInput)
+            .pipe(Effect.forkScoped);
+          yield* Deferred.succeed(acknowledgeSteer, undefined);
+          yield* Fiber.join(steering);
+          yield* Fiber.join(attach);
+          yield* harness.sessionUpdate(fallbackUpdate("complete."));
+          yield* TestClock.adjust("3 seconds");
+          const fallbackTerminal = yield* Stream.fromQueue(harness.events).pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          );
+          assert.notEqual(fallbackTerminal.providerTurnId, harness.steerInput.providerTurnId);
+          assert.equal(fallbackTerminal.status, "completed");
+          const snapshot = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.turnInput.providerThread,
+          });
+          const fallbackMessages = snapshot.messages.filter(
+            (message) => message.role === "assistant",
+          );
+          assert.deepEqual(
+            fallbackMessages.map((message) => [message.runId, message.text]),
+            [[continuationInput.runId, "Fallback response complete."]],
+          );
+          assert.equal(
+            snapshot.messages.filter(
+              (message) => message.id === harness.steerInput.message.messageId,
+            ).length,
+            1,
+          );
+          assert.deepEqual(harness.counts, { runtime: 1, prompt: 1, cancel: 0 });
+          assert.isTrue(Option.isNone(yield* Queue.poll(harness.continuationRequests)));
+          assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+        }).pipe(Effect.provideService(Clock.Clock, blockingClock));
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.live("cleans detached fixtures when an assertion aborts the test scope", () =>
     Effect.gen(function* () {
       if ((yield* HostProcessPlatform) !== "linux") return;

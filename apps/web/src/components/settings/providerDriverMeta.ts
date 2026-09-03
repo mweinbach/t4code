@@ -5,6 +5,7 @@ import {
   CursorSettings,
   GrokSettings,
   OpenCodeSettings,
+  OpenGrokSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
@@ -87,6 +88,12 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "Grok",
     icon: GrokIcon,
     settingsSchema: GrokSettings,
+  },
+  {
+    value: ProviderDriverKind.make("open-grok"),
+    label: "OpenGrok",
+    icon: GrokIcon,
+    settingsSchema: OpenGrokSettings,
   },
   {
     value: ProviderDriverKind.make("acpRegistry"),

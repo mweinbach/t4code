@@ -6,6 +6,7 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  OpenGrokSettings,
   DEFAULT_SERVER_SETTINGS,
   defaultEnabledForDriver,
   resolveProviderInstanceEnabled,
@@ -20,6 +21,42 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeOpenGrokSettings = Schema.decodeUnknownSync(OpenGrokSettings);
+
+describe("OpenGrok settings", () => {
+  it("enables the local OpenGrok binary independently of Grok", () => {
+    expect(decodeOpenGrokSettings({})).toEqual({
+      enabled: true,
+      binaryPath: "open-grok",
+      customModels: [],
+    });
+    const settings = decodeServerSettings({ providers: { grok: { binaryPath: "/opt/grok" } } });
+    expect(settings.providers["open-grok"].binaryPath).toBe("open-grok");
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("open-grok"))).toBe(true);
+  });
+
+  it("round-trips binary, model and disabled state without affecting Grok", () => {
+    const openGrok = {
+      enabled: false,
+      binaryPath: "/opt/open-grok",
+      customModels: ["xai/custom-model"],
+    };
+    const patch = decodeServerSettingsPatch({
+      providers: { "open-grok": { ...openGrok, binaryPath: "  /opt/open-grok  " } },
+    });
+    expect(patch.providers?.["open-grok"]).toEqual(openGrok);
+    const decoded = decodeServerSettings(patch);
+    expect(encodeServerSettings(decoded).providers?.["open-grok"]).toEqual(openGrok);
+    expect(decoded.providers.grok.binaryPath).toBe("grok");
+    expect(
+      resolveProviderInstanceEnabled({
+        driver: ProviderDriverKind.make("open-grok"),
+        enabled: false,
+        config: {},
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("ClaudeSettings auto-compaction", () => {
   it("uses Claude's default threshold when no override is configured", () => {
@@ -305,12 +342,13 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("provider enabled defaults", () => {
-  it("enables only the stable bindings by default", () => {
+  it("enables the stable bindings and the fork's OpenGrok provider by default", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.providers.codex.enabled).toBe(true);
     expect(decoded.providers.claudeAgent.enabled).toBe(true);
     expect(decoded.providers.cursor.enabled).toBe(false);
     expect(decoded.providers.grok.enabled).toBe(false);
+    expect(decoded.providers["open-grok"].enabled).toBe(true);
     expect(decoded.providers.opencode.enabled).toBe(false);
   });
 

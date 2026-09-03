@@ -153,6 +153,45 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect(
+    "honors metadata auth selection without falling back to interactive authentication",
+    () =>
+      Effect.gen(function* () {
+        for (const selectedMethod of ["test", undefined]) {
+          const methods: string[] = [];
+          const result = yield* Effect.gen(function* () {
+            const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+            return yield* runtime.start();
+          }).pipe(
+            Effect.provide(
+              AcpSessionRuntime.layer({
+                spawn: {
+                  command: mockAgentCommand,
+                  args: mockAgentArgs,
+                  env: { T3_ACP_AUTH_METHOD_ID: "test", T3_ACP_REQUIRE_AUTH: "1" },
+                },
+                cwd: process.cwd(),
+                clientInfo: { name: "t4-auth-test", version: "0.0.0" },
+                resolveAuthMethodId: () => selectedMethod,
+                requestLogger: (event) =>
+                  Effect.sync(() => {
+                    if (event.status === "started") methods.push(event.method);
+                  }),
+              }),
+            ),
+            Effect.scoped,
+            Effect.result,
+          );
+          expect(methods).toEqual(
+            selectedMethod
+              ? ["initialize", "session/new", "authenticate", "session/new"]
+              : ["initialize", "session/new"],
+          );
+          expect(result._tag).toBe(selectedMethod ? "Success" : "Failure");
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("starts a session, prompts, and emits normalized events against the mock agent", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

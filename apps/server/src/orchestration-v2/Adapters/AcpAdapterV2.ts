@@ -84,6 +84,7 @@ import {
   ProviderAdapterResumeThreadError,
   ProviderAdapterRollbackThreadError,
   ProviderAdapterRuntimeRequestResponseError,
+  ProviderAdapterSteerRunError,
   ProviderAdapterSteerRunUnsupportedError,
   ProviderAdapterTurnStartError,
   ProviderAdapterV2,
@@ -94,6 +95,7 @@ import {
   type ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2Shape,
+  type ProviderAdapterV2SteerInput,
   type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
 
@@ -101,6 +103,7 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
+  readonly runtimeMode?: ProviderAdapterV2RuntimePolicy["runtimeMode"];
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly interruptPromptOnCancel?: boolean;
   readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
@@ -149,6 +152,13 @@ export interface AcpAdapterV2ExtensionContext {
   readonly captureProposedPlan: (input: { readonly planMarkdown: string }) => Effect.Effect<void>;
   /** Last markdown captured for the active turn, as the exit-gate fallback. */
   readonly lastProposedPlanMarkdown: Effect.Effect<string | undefined>;
+}
+
+export interface AcpAdapterV2SteerInput {
+  readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly sessionId: string;
+  readonly interjectionId: string;
+  readonly content: ReadonlyArray<EffectAcpSchema.ContentBlock>;
 }
 
 export interface AcpRootTurnIdleSnapshot {
@@ -212,6 +222,10 @@ export interface AcpAdapterV2Flavor {
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
+  ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Queue input into the current native prompt without cancelling or replacing it. */
+  readonly steerTurn?: (
+    input: AcpAdapterV2SteerInput,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly extractSubagentUpdate?: (
     toolCall: AcpToolCallState,
@@ -1746,6 +1760,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         const nativeLogging = options.nativeLogging?.(input.threadId);
         const makeRuntimeInput = (runtimeGeneration: number): AcpAdapterV2RuntimeInput => ({
           cwd: input.runtimePolicy.cwd ?? process.cwd(),
+          runtimeMode: input.runtimePolicy.runtimeMode,
           mcpServers: acpMcpServers(input.threadId),
           interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
           clientCapabilities: {
@@ -5080,18 +5095,24 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           });
 
         const resolvePromptParts = Effect.fnUntraced(function* (
-          turnInput: ProviderAdapterV2TurnInput,
+          turnInput: Pick<ProviderAdapterV2TurnInput, "threadId" | "message"> & {
+            readonly runOrdinal?: number;
+          },
         ) {
           const prompt: Array<EffectAcpSchema.ContentBlock> = [];
-          const text = t3OrchestrationPromptForFirstRun({
-            prompt: providerMessageTextWithAttachmentPaths({
-              text: turnInput.message.text,
-              attachments: turnInput.message.attachments,
-              attachmentsDir: serverConfig.attachmentsDir,
-            }),
-            runOrdinal: turnInput.runOrdinal,
-            hasT3Mcp: acpMcpServers(turnInput.threadId).length > 0,
+          const messageText = providerMessageTextWithAttachmentPaths({
+            text: turnInput.message.text,
+            attachments: turnInput.message.attachments,
+            attachmentsDir: serverConfig.attachmentsDir,
           });
+          const text =
+            turnInput.runOrdinal === undefined
+              ? messageText
+              : t3OrchestrationPromptForFirstRun({
+                  prompt: messageText,
+                  runOrdinal: turnInput.runOrdinal,
+                  hasT3Mcp: acpMcpServers(turnInput.threadId).length > 0,
+                });
           if (text.length > 0) {
             prompt.push({ type: "text", text });
           }
@@ -5660,13 +5681,85 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               ),
           ),
           startTurn,
-          steerTurn: (turnInput) =>
-            Effect.fail(
-              new ProviderAdapterSteerRunUnsupportedError({
-                driver,
-                providerThreadId: turnInput.providerThread.id,
-              }),
-            ),
+          steerTurn: (turnInput: ProviderAdapterV2SteerInput) => {
+            const steer = flavor.steerTurn;
+            if (steer === undefined) {
+              return Effect.fail(
+                new ProviderAdapterSteerRunUnsupportedError({
+                  driver,
+                  providerThreadId: turnInput.providerThread.id,
+                }),
+              );
+            }
+            return runtimeTransitionPermit
+              .withPermit(
+                Effect.gen(function* () {
+                  yield* awaitRuntimeTeardown();
+                  const sessionId = yield* nativeThreadId(driver, turnInput.providerThread);
+                  const current = yield* Ref.get(activeTurn);
+                  const assertActive = Effect.gen(function* () {
+                    if (
+                      current === null ||
+                      (yield* Ref.get(activeTurn)) !== current ||
+                      current.providerTurnId !== turnInput.providerTurnId ||
+                      current.input.threadId !== turnInput.threadId ||
+                      current.input.runId !== turnInput.runId ||
+                      current.input.providerThread.id !== turnInput.providerThread.id ||
+                      current.nativeThreadId !== sessionId ||
+                      current.finalized ||
+                      current.interrupted ||
+                      current.promptSettled ||
+                      (yield* Deferred.isDone(current.promptWireSettled))
+                    ) {
+                      return yield* new ProviderAdapterProtocolError({
+                        driver,
+                        detail: `ACP provider turn ${turnInput.providerTurnId} has no active prompt to steer`,
+                      });
+                    }
+                    return current;
+                  });
+                  yield* assertActive;
+                  const content = yield* resolvePromptParts(turnInput);
+                  // Attachment reads can yield while the prompt completes. Recheck
+                  // immediately before the extension queues input on this session.
+                  const context = yield* assertActive;
+                  // Session-only extensions cannot atomically compare a native turn
+                  // id; after this send their queue acknowledgement owns completion.
+                  yield* steer({
+                    runtime,
+                    sessionId,
+                    interjectionId: String(turnInput.message.messageId),
+                    content,
+                  });
+                  const now = yield* DateTime.now;
+                  yield* rememberSnapshotMessage({
+                    createdBy: turnInput.message.createdBy,
+                    creationSource: turnInput.message.creationSource,
+                    id: turnInput.message.messageId,
+                    threadId: turnInput.threadId,
+                    runId: turnInput.runId,
+                    nodeId: context.input.rootNodeId,
+                    role: "user",
+                    text: turnInput.message.text,
+                    attachments: [...turnInput.message.attachments],
+                    streaming: false,
+                    createdAt: now,
+                    updatedAt: now,
+                  });
+                }),
+              )
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterSteerRunError({
+                      driver,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId: turnInput.providerTurnId,
+                      cause,
+                    }),
+                ),
+              );
+          },
           interruptTurn: Effect.fn("AcpAdapterV2.interruptTurn")(
             function* (turnInput: ProviderAdapterV2InterruptInput) {
               return yield* Effect.uninterruptibleMask((restore) =>

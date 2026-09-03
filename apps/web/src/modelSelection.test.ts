@@ -61,6 +61,43 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it("routes OpenGrok's discovered and custom models independently of Grok", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("grok"),
+        instanceId: "grok",
+        models: ["grok-build"],
+      }),
+      provider({
+        provider: ProviderDriverKind.make("open-grok"),
+        instanceId: "open-grok",
+        models: ["xai/grok-4"],
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providers: {
+        ...DEFAULT_UNIFIED_SETTINGS.providers,
+        "open-grok": {
+          ...DEFAULT_UNIFIED_SETTINGS.providers["open-grok"],
+          customModels: ["xai/custom"],
+        },
+      },
+    };
+    const [grok, openGrok] = deriveProviderInstanceEntries(providers);
+    expect(openGrok?.displayName).toBe("OpenGrok");
+    expect(getAppModelOptionsForInstance(settings, openGrok!).map((model) => model.slug)).toEqual([
+      "xai/grok-4",
+      "xai/custom",
+    ]);
+    expect(getAppModelOptionsForInstance(settings, grok!).map((model) => model.slug)).toEqual([
+      "grok-build",
+    ]);
+    expect(
+      resolveAppModelSelectionForInstance(openGrok!.instanceId, settings, providers, "xai/grok-4"),
+    ).toBe("xai/grok-4");
+  });
+
   it("preserves server-provided legacy model metadata", () => {
     const baseProvider = provider({
       instanceId: "claudeAgent",

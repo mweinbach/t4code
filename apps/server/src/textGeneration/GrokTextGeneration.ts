@@ -39,9 +39,16 @@ const isTextGenerationError = Schema.is(TextGenerationError);
 export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  flavor?: {
+    readonly displayName: string;
+    readonly makeRuntime: typeof makeGrokAcpRuntime;
+    readonly resolveModelId: typeof resolveGrokAcpBaseModelId;
+  },
 ) {
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const displayName = flavor?.displayName ?? "Grok";
+  const makeRuntime = flavor?.makeRuntime ?? makeGrokAcpRuntime;
 
   const runGrokJson = <S extends Schema.Top>({
     operation,
@@ -61,9 +68,11 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
-      const resolvedModel = resolveGrokAcpBaseModelId(modelSelection.model);
+      const resolvedModel = (flavor?.resolveModelId ?? resolveGrokAcpBaseModelId)(
+        modelSelection.model,
+      );
       const outputRef = yield* Ref.make("");
-      const runtime = yield* makeGrokAcpRuntime({
+      const runtime = yield* makeRuntime({
         grokSettings,
         environment,
         childProcessSpawner: commandSpawner,
@@ -95,12 +104,12 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           currentReasoningEffort: currentGrokReasoningEffortFromSessionSetup(
             started.sessionSetupResult,
           ),
-          requestedModelId: resolvedModel,
+          requestedModelId: resolvedModel === "default" ? undefined : resolvedModel,
           requestedReasoningEffort,
           mapError: (cause) =>
             new TextGenerationError({
               operation,
-              detail: "Failed to set Grok ACP base model for text generation.",
+              detail: `Failed to set ${displayName} ACP base model for text generation.`,
               cause,
             }),
         });
@@ -114,7 +123,10 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           Option.match({
             onNone: () =>
               Effect.fail(
-                new TextGenerationError({ operation, detail: "Grok ACP request timed out." }),
+                new TextGenerationError({
+                  operation,
+                  detail: `${displayName} ACP request timed out.`,
+                }),
               ),
             onSome: (value) => Effect.succeed(value),
           }),
@@ -124,7 +136,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
             ? cause
             : new TextGenerationError({
                 operation,
-                detail: "Grok ACP request failed.",
+                detail: `${displayName} ACP request failed.`,
                 cause,
               }),
         ),
@@ -136,8 +148,8 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           operation,
           detail:
             promptResult.stopReason === "cancelled"
-              ? "Grok ACP request was cancelled."
-              : "Grok Agent returned empty output.",
+              ? `${displayName} ACP request was cancelled.`
+              : `${displayName} Agent returned empty output.`,
         });
       }
 
@@ -148,7 +160,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
             Effect.fail(
               new TextGenerationError({
                 operation,
-                detail: "Grok Agent returned invalid structured output.",
+                detail: `${displayName} Agent returned invalid structured output.`,
                 cause,
               }),
             ),
@@ -160,7 +172,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           ? cause
           : new TextGenerationError({
               operation,
-              detail: "Grok ACP text generation failed.",
+              detail: `${displayName} ACP text generation failed.`,
               cause,
             }),
       ),

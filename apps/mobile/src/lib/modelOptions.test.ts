@@ -12,6 +12,37 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("keeps OpenGrok models separate from Grok and respects disabled instances", () => {
+    const config = {
+      providers: ["grok", "open-grok", "open-grok-work"].map((instanceId) => ({
+        instanceId,
+        driver: instanceId === "grok" ? "grok" : "open-grok",
+        enabled: instanceId !== "open-grok-work",
+        installed: true,
+        auth: { status: "authenticated" },
+        models: [
+          {
+            slug: "xai/grok-4",
+            name: "Grok 4",
+            isCustom: false,
+            isDefault: true,
+            capabilities: {},
+          },
+        ],
+      })),
+    } as unknown as ServerConfig;
+
+    expect(groupByProvider(buildModelOptions(config, null))).toMatchObject([
+      { providerKey: "grok", models: [{ selection: { instanceId: "grok", model: "xai/grok-4" } }] },
+      {
+        providerKey: "open-grok",
+        providerLabel: "OpenGrok",
+        models: [{ selection: { instanceId: "open-grok", model: "xai/grok-4" } }],
+      },
+    ]);
+    expect(buildModelOptions(config, null)).toHaveLength(2);
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [

@@ -98,6 +98,10 @@ export interface AcpSessionRuntimeOptions {
     readonly version: string;
   };
   readonly authMethodId?: string;
+  /** Select a noninteractive method from initialized metadata; undefined leaves auth to the CLI. */
+  readonly resolveAuthMethodId?: (
+    initialized: EffectAcpSchema.InitializeResponse,
+  ) => string | undefined;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -1929,7 +1933,12 @@ export const make = (
         authRequiredError: EffectAcpErrors.AcpError,
       ): Effect.Effect<void, EffectAcpErrors.AcpError> =>
         Effect.gen(function* () {
-          const configuredAuthMethodId = options.authMethodId?.trim();
+          const configuredAuthMethodId = options.resolveAuthMethodId
+            ? options.resolveAuthMethodId(initializeResult)?.trim()
+            : options.authMethodId?.trim();
+          if (options.resolveAuthMethodId && !configuredAuthMethodId) {
+            return yield* authRequiredError;
+          }
           const authMethod = selectAcpAgentAuthMethod(
             initializeResult.authMethods,
             configuredAuthMethodId,

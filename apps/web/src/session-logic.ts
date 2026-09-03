@@ -44,6 +44,7 @@ export const PROVIDER_OPTIONS: Array<{
     pickerSidebarBadge: "new",
   },
   { value: ProviderDriverKind.make("grok"), label: "Grok", available: true },
+  { value: ProviderDriverKind.make("open-grok"), label: "OpenGrok", available: true },
 ];
 
 export type WorkLogToolLifecycleStatus =

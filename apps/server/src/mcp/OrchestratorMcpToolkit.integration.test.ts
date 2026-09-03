@@ -1848,6 +1848,51 @@ describe("orchestrator MCP toolkit", () => {
               interruptedWaitCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(interruptedWait.status).toBe("interrupted");
+            const repeatedSteerCall = yield* invoke("t3_thread_send", {
+              threadId: activeThread.threadId,
+              message: "Include the latest parent guidance before finishing.",
+              mode: "steer",
+              clientRequestId: "managed-active-steer-1",
+            });
+            const repeatedSteer = yield* decodeThreadSendResult(
+              repeatedSteerCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedSteer).toMatchObject({
+              messageId: steered.messageId,
+              runId: activeRun.id,
+              delivery: "steered",
+              status: "interrupted",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(activeThread.threadId)).messages.filter(
+                (message) => message.id === steered.messageId,
+              ),
+            ).toHaveLength(1);
+            const lateSteerCall = yield* invoke("t3_thread_send", {
+              threadId: activeThread.threadId,
+              message: "This is a new correction after the turn stopped.",
+              mode: "steer",
+              clientRequestId: "managed-active-steer-2",
+            });
+            expect(lateSteerCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "thread_not_sendable",
+            });
+            const reusedSteerCall = yield* invoke("t3_thread_send", {
+              threadId: activeThread.threadId,
+              message: "A reused request ID must not replace the accepted instruction.",
+              mode: "steer",
+              clientRequestId: "managed-active-steer-1",
+            });
+            const reusedSteer = yield* decodeThreadSendResult(
+              reusedSteerCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(reusedSteer.messageId).toBe(steered.messageId);
+            expect(
+              (yield* orchestrator.getThreadProjection(activeThread.threadId)).messages.filter(
+                (message) => message.id === steered.messageId,
+              ),
+            ).toMatchObject([{ text: "Include the latest parent guidance before finishing." }]);
             const repeatedInterruptCall = yield* invoke("t3_thread_interrupt", {
               threadId: activeThread.threadId,
               runId: activeRun.id,
