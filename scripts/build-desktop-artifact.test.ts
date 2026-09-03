@@ -605,6 +605,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         false,
       );
 
+      for (const config of [mac, linux, win]) {
+        assert.equal(config.appId, "com.mweinbach.t4code");
+        assert.equal(config.productName, "T4 Code");
+        assert.equal(config.artifactName, "T4-Code-${version}-${arch}.${ext}");
+      }
+
       // All platforms keep app.asar fully packed; Windows ships the server
       // tree as the hand-packed server.asar sidecar in extraResources instead
       // of unpacking thousands of loose files at install time.

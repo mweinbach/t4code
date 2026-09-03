@@ -1,23 +1,31 @@
-name: T4 server release
+name: T4 release
 
 on:
   push:
     tags:
       - "t4-v*"
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a release after all builds pass
+        type: boolean
+        default: true
 
 concurrency:
-  group: t4-server-release
+  group: t4-release
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  preflight:
     if: github.repository == 'mweinbach/t4code'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -30,17 +38,6 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=t3...
-              - --filter=@t3tools/web...
-              - --filter=@t3tools/scripts...
-
       - name: Check release version and tag
         id: release
         shell: bash
@@ -51,6 +48,9 @@ jobs:
             echo "Expected a T4 fork version such as 0.0.38-t4.1; received $version." >&2
             exit 1
           fi
+          for package in apps/desktop apps/web packages/contracts; do
+            test "$(node -p "require('./$package/package.json').version")" = "$version"
+          done
           tag="t4-v$version"
           if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "$tag" ]]; then
             echo "Tag $GITHUB_REF_NAME does not match package version $version." >&2
@@ -69,6 +69,31 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+  server:
+    name: Build and verify server
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+              - --filter=@t3tools/web...
+              - --filter=@t3tools/scripts...
+
       - name: Build server and web client
         run: vp run --filter t3 build
 
@@ -78,7 +103,7 @@ jobs:
       - name: Verify installation and native dependencies
         shell: bash
         env:
-          T4_EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          T4_EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
           install_dir="$RUNNER_TEMP/t4-install"
@@ -106,16 +131,258 @@ jobs:
           require('msgpackr-extract');
           JS
 
-      - name: Publish immutable release
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: t4-release-server
+          path: ${{ runner.temp }}/t4-release/t4-server.tgz
+          if-no-files-found: error
+
+  wsl_node_pty:
+    name: Build Windows WSL terminal dependency
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+
+      - name: Build Linux x64 node-pty
         shell: bash
-        env:
-          T4_RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          T4_RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          gh release create "$T4_RELEASE_TAG" "$RUNNER_TEMP/t4-release/t4-server.tgz" \
+          pty_pkg=$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['./apps/server'] }))")
+          pty_dir=$(dirname "$pty_pkg")
+          (cd "$pty_dir" && npx --yes node-gyp rebuild)
+          mkdir -p wsl-prebuild
+          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
+          node -e "require('./wsl-prebuild/pty.node')"
+
+      - name: Upload WSL dependency
+        uses: actions/upload-artifact@v7
+        with:
+          name: t4-wsl-node-pty-x64
+          path: wsl-prebuild/pty.node
+          if-no-files-found: error
+
+  desktop:
+    name: Build ${{ matrix.label }}
+    needs: [preflight, wsl_node_pty]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS Apple Silicon
+            runner: macos-15
+            platform: mac
+            target: dmg
+            arch: arm64
+            rust_target: aarch64-apple-darwin
+          - label: macOS Intel
+            runner: macos-15-intel
+            platform: mac
+            target: dmg
+            arch: x64
+            rust_target: x86_64-apple-darwin
+          - label: Windows x64
+            runner: windows-2025
+            platform: win
+            target: nsis
+            arch: x64
+            rust_target: x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: ${{ matrix.platform != 'win' }}
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Download WSL node-pty prebuild
+        if: matrix.platform == 'win'
+        uses: actions/download-artifact@v8
+        with:
+          name: t4-wsl-node-pty-x64
+          path: wsl-prebuild
+
+      - name: Install Spectre-mitigated MSVC libraries
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -notin @(0, 3010)) {
+            throw "Visual Studio Installer failed: $($proc.ExitCode)"
+          }
+
+      - name: Build desktop installers
+        shell: bash
+        env:
+          T4_RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          T3CODE_DESKTOP_SIGNED: "false"
+        run: |
+          set -euo pipefail
+          args=(
+            --platform "${{ matrix.platform }}"
+            --target "${{ matrix.target }}"
+            --arch "${{ matrix.arch }}"
+            --build-version "$T4_RELEASE_VERSION"
+            --verbose
+          )
+          if [[ "${{ matrix.platform }}" == win ]]; then
+            args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
+          fi
+          vp run dist:desktop:artifact "${args[@]}"
+
+      - name: Verify macOS archives and packaged server
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          T4_RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          T4_RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          hdiutil verify "release/T4-Code-$T4_RELEASE_VERSION-$T4_RELEASE_ARCH.dmg"
+          ditto -x -k "release/T4-Code-$T4_RELEASE_VERSION-$T4_RELEASE_ARCH.zip" "$RUNNER_TEMP/t4-mac"
+          app="$RUNNER_TEMP/t4-mac/T4 Code.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = com.mweinbach.t4code
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$T4_RELEASE_VERSION"
+          test -s "$app/Contents/Resources/app.asar"
+          installed_version=$(ELECTRON_RUN_AS_NODE=1 NO_COLOR=1 "$app/Contents/MacOS/T4 Code" "$app/Contents/Resources/app.asar/apps/server/dist/bin.mjs" --version)
+          printf '%s\n' "$installed_version"
+          test "$installed_version" = "t3 v$T4_RELEASE_VERSION"
+
+      - name: Collect installers
+        shell: bash
+        env:
+          T4_RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          T4_RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-publish
+          if [[ "${{ matrix.platform }}" == mac ]]; then
+            extensions=(dmg zip)
+          else
+            extensions=(exe)
+          fi
+          for extension in "${extensions[@]}"; do
+            artifact="release/T4-Code-$T4_RELEASE_VERSION-$T4_RELEASE_ARCH.$extension"
+            test -s "$artifact"
+            cp "$artifact" release-publish/
+          done
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: t4-release-desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-publish/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish complete T4 release
+    if: github.event_name != 'workflow_dispatch' || inputs.publish
+    needs: [preflight, server, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      T4_RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      T4_RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - name: Download verified artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: t4-release-*
+          merge-multiple: true
+          path: release-publish
+
+      - name: Verify complete release and write checksums
+        shell: bash
+        working-directory: release-publish
+        run: |
+          set -euo pipefail
+          assets=(
+            t4-server.tgz
+            "T4-Code-$T4_RELEASE_VERSION-arm64.dmg"
+            "T4-Code-$T4_RELEASE_VERSION-arm64.zip"
+            "T4-Code-$T4_RELEASE_VERSION-x64.dmg"
+            "T4-Code-$T4_RELEASE_VERSION-x64.zip"
+            "T4-Code-$T4_RELEASE_VERSION-x64.exe"
+          )
+          for asset in "${assets[@]}"; do
+            test -s "$asset"
+          done
+          sha256sum "${assets[@]}" > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+      - name: Publish immutable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$T4_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $T4_RELEASE_TAG already exists; refusing to replace its assets." >&2
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/t4-release-notes.md" <<EOF
+          T4 Code $T4_RELEASE_VERSION, built from $GITHUB_SHA.
+
+          - macOS Apple Silicon: arm64 DMG and ZIP.
+          - macOS Intel: x64 DMG and ZIP.
+          - Windows x64: NSIS installer, including the WSL terminal dependency.
+          - Remote server and web client: t4-server.tgz.
+
+          These are personal-fork builds. macOS builds are not Developer ID signed or notarized; Windows builds are unsigned. The operating system may require an explicit security override when opening them. T4 uses its own application identity and ~/.t4 data directory. Desktop automatic updates remain disabled.
+
+          Install the matching remote server with:
+
+              npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/$GITHUB_REPOSITORY/releases/download/$T4_RELEASE_TAG/t4-server.tgz -- t4
+
+          SHA256SUMS contains checksums for all six release artifacts.
+          EOF
+          gh release create "$T4_RELEASE_TAG" release-publish/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "T4 Code server $T4_RELEASE_VERSION" \
-            --notes "T4 Code server and web client for version $T4_RELEASE_VERSION, built from $GITHUB_SHA. Install with npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/$GITHUB_REPOSITORY/releases/download/$T4_RELEASE_TAG/t4-server.tgz -- t4." \
-            --latest
+            --title "T4 Code $T4_RELEASE_VERSION" \
+            --notes-file "$RUNNER_TEMP/t4-release-notes.md" \
+            --draft
+          gh release edit "$T4_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
