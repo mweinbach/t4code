@@ -48,6 +48,10 @@ React Native mobile and SwiftUI mobile app identities are outside this desktop
 fork change. Remote clients can connect to T4's server as supported by the
 underlying V2 branch.
 
+Orchestrator V2 is the default server runtime. See [agent thread controls](../user/agent-thread-controls.md)
+for MCP controls and steering modes, and [OpenGrok](../user/open-grok.md) for
+the fork's additional provider.
+
 ## Remote server releases
 
 SSH auto-install and background-service upgrades install the exact T4 GitHub
@@ -84,23 +88,18 @@ release containing:
 
 - `t4-server.tgz`: the npm-installable server and web client.
 - `T4-Code-<version>-arm64.dmg` and `.zip`: macOS Apple Silicon.
-- `T4-Code-<version>-x64.dmg` and `.zip`: macOS Intel.
-- `T4-Code-<version>-x64.exe`: Windows x64 NSIS installer, including the Linux
-  terminal dependency used by WSL.
-- `SHA256SUMS`: checksums for those six files.
+- `SHA256SUMS`: checksums for those three files.
 
-The workflow uses GitHub-hosted macOS and Windows runners. It verifies the server
-package installation and native dependencies, checks the macOS archives and
-bundled server version, and validates the packaged Windows server and native
-dependencies before publication. Windows arm64 is not currently built. The
-standalone server package still omits optional native process-metrics binaries;
-desktop builds include their platform's resource monitor.
+The workflow uses GitHub-hosted Linux and macOS runners. It verifies the server
+package installation and native dependencies, plus the macOS archives and
+bundled server version before publication. Intel macOS and Windows installers
+are not currently built. The standalone server package still omits optional
+native process-metrics binaries; the macOS app includes its resource monitor.
 
 These personal-fork installers are not configured with signing credentials.
-macOS builds are not Developer ID signed or notarized; Windows builds are
-unsigned. Gatekeeper or SmartScreen may require an explicit override on first
-launch. T4's app identity and data stay separate from T3, and desktop automatic
-updates remain disabled.
+macOS builds are not Developer ID signed or notarized. Gatekeeper may require an
+explicit override on first launch. T4's app identity and data stay separate from
+T3, and desktop automatic updates remain disabled.
 
 Versions are immutable: bump the version instead of replacing a published
 asset. The release remains a draft while its assets upload and becomes public
@@ -109,8 +108,8 @@ client that expects that server version. Exact-version installs never fall back
 to upstream or a different T4 release. Clients without a usable version select
 the latest published T4 release. Turn off the `publish` input on a manual
 workflow run to build and verify artifacts without creating a release.
-Manual workflow dispatch otherwise performs the same
-release checks and publication for the selected commit.
+Manual workflow dispatch otherwise performs the same release checks and
+publication for the selected commit.
 
 The artifact can also be built locally with `vp run --filter t3 build` followed
 by `node scripts/pack-t4-server.ts --out-dir /tmp/t4-release`. Use an empty output

@@ -138,11 +138,11 @@ jobs:
           path: ${{ runner.temp }}/t4-release/t4-server.tgz
           if-no-files-found: error
 
-  wsl_node_pty:
-    name: Build Windows WSL terminal dependency
+  desktop:
+    name: Build macOS Apple Silicon
     needs: preflight
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -157,69 +157,6 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: |
-            args:
-              - --filter=t3...
-
-      - name: Build Linux x64 node-pty
-        shell: bash
-        run: |
-          set -euo pipefail
-          pty_pkg=$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['./apps/server'] }))")
-          pty_dir=$(dirname "$pty_pkg")
-          (cd "$pty_dir" && npx --yes node-gyp rebuild)
-          mkdir -p wsl-prebuild
-          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
-          node -e "require('./wsl-prebuild/pty.node')"
-
-      - name: Upload WSL dependency
-        uses: actions/upload-artifact@v7
-        with:
-          name: t4-wsl-node-pty-x64
-          path: wsl-prebuild/pty.node
-          if-no-files-found: error
-
-  desktop:
-    name: Build ${{ matrix.label }}
-    needs: [preflight, wsl_node_pty]
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: macOS Apple Silicon
-            runner: macos-15
-            platform: mac
-            target: dmg
-            arch: arm64
-            rust_target: aarch64-apple-darwin
-          - label: macOS Intel
-            runner: macos-15-intel
-            platform: mac
-            target: dmg
-            arch: x64
-            rust_target: x86_64-apple-darwin
-          - label: Windows x64
-            runner: windows-2025
-            platform: win
-            target: nsis
-            arch: x64
-            rust_target: x86_64-pc-windows-msvc
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: ${{ matrix.platform != 'win' }}
           run-install: false
 
       - name: Install desktop dependencies
@@ -228,30 +165,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust_target }}
-
-      - name: Download WSL node-pty prebuild
-        if: matrix.platform == 'win'
-        uses: actions/download-artifact@v8
-        with:
-          name: t4-wsl-node-pty-x64
-          path: wsl-prebuild
-
-      - name: Install Spectre-mitigated MSVC libraries
-        if: matrix.platform == 'win'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installPath = & $vswhere -products * -latest -property installationPath
-          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
-          $proc = Start-Process -FilePath $setupExe `
-            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre", "--quiet", "--norestart" `
-            -Wait -PassThru -NoNewWindow
-          if ($null -eq $proc -or $proc.ExitCode -notin @(0, 3010)) {
-            throw "Visual Studio Installer failed: $($proc.ExitCode)"
-          }
+          targets: aarch64-apple-darwin
 
       - name: Build desktop installers
         shell: bash
@@ -260,28 +174,21 @@ jobs:
           T3CODE_DESKTOP_SIGNED: "false"
         run: |
           set -euo pipefail
-          args=(
-            --platform "${{ matrix.platform }}"
-            --target "${{ matrix.target }}"
-            --arch "${{ matrix.arch }}"
-            --build-version "$T4_RELEASE_VERSION"
+          vp run dist:desktop:artifact \
+            --platform mac \
+            --target dmg \
+            --arch arm64 \
+            --build-version "$T4_RELEASE_VERSION" \
             --verbose
-          )
-          if [[ "${{ matrix.platform }}" == win ]]; then
-            args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
-          fi
-          vp run dist:desktop:artifact "${args[@]}"
 
       - name: Verify macOS archives and packaged server
-        if: matrix.platform == 'mac'
         shell: bash
         env:
           T4_RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
-          T4_RELEASE_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          hdiutil verify "release/T4-Code-$T4_RELEASE_VERSION-$T4_RELEASE_ARCH.dmg"
-          ditto -x -k "release/T4-Code-$T4_RELEASE_VERSION-$T4_RELEASE_ARCH.zip" "$RUNNER_TEMP/t4-mac"
+          hdiutil verify "release/T4-Code-$T4_RELEASE_VERSION-arm64.dmg"
+          ditto -x -k "release/T4-Code-$T4_RELEASE_VERSION-arm64.zip" "$RUNNER_TEMP/t4-mac"
           app="$RUNNER_TEMP/t4-mac/T4 Code.app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = com.mweinbach.t4code
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$T4_RELEASE_VERSION"
@@ -294,17 +201,11 @@ jobs:
         shell: bash
         env:
           T4_RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
-          T4_RELEASE_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           mkdir -p release-publish
-          if [[ "${{ matrix.platform }}" == mac ]]; then
-            extensions=(dmg zip)
-          else
-            extensions=(exe)
-          fi
-          for extension in "${extensions[@]}"; do
-            artifact="release/T4-Code-$T4_RELEASE_VERSION-$T4_RELEASE_ARCH.$extension"
+          for extension in dmg zip; do
+            artifact="release/T4-Code-$T4_RELEASE_VERSION-arm64.$extension"
             test -s "$artifact"
             cp "$artifact" release-publish/
           done
@@ -312,7 +213,7 @@ jobs:
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: t4-release-desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          name: t4-release-desktop-mac-arm64
           path: release-publish/*
           if-no-files-found: error
 
@@ -345,9 +246,6 @@ jobs:
             t4-server.tgz
             "T4-Code-$T4_RELEASE_VERSION-arm64.dmg"
             "T4-Code-$T4_RELEASE_VERSION-arm64.zip"
-            "T4-Code-$T4_RELEASE_VERSION-x64.dmg"
-            "T4-Code-$T4_RELEASE_VERSION-x64.zip"
-            "T4-Code-$T4_RELEASE_VERSION-x64.exe"
           )
           for asset in "${assets[@]}"; do
             test -s "$asset"
@@ -367,17 +265,15 @@ jobs:
           T4 Code $T4_RELEASE_VERSION, built from $GITHUB_SHA.
 
           - macOS Apple Silicon: arm64 DMG and ZIP.
-          - macOS Intel: x64 DMG and ZIP.
-          - Windows x64: NSIS installer, including the WSL terminal dependency.
           - Remote server and web client: t4-server.tgz.
 
-          These are personal-fork builds. macOS builds are not Developer ID signed or notarized; Windows builds are unsigned. The operating system may require an explicit security override when opening them. T4 uses its own application identity and ~/.t4 data directory. Desktop automatic updates remain disabled.
+          These are personal-fork builds. macOS builds are not Developer ID signed or notarized. macOS may require an explicit security override when opening them. T4 uses its own application identity and ~/.t4 data directory. Desktop automatic updates remain disabled.
 
           Install the matching remote server with:
 
               npx --yes --allow-scripts=node-pty,msgpackr-extract --package https://github.com/$GITHUB_REPOSITORY/releases/download/$T4_RELEASE_TAG/t4-server.tgz -- t4
 
-          SHA256SUMS contains checksums for all six release artifacts.
+          SHA256SUMS contains checksums for all three release artifacts.
           EOF
           gh release create "$T4_RELEASE_TAG" release-publish/* \
             --repo "$GITHUB_REPOSITORY" \
