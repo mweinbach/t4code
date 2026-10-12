@@ -1,18 +1,4 @@
-diff --git a/package.json b/package.json
-index e000a78..8432546 100644
---- a/package.json
-+++ b/package.json
-@@ -11,7 +11,7 @@
-     ".": {
-       "types": "./dist/index.d.ts",
-       "import": "./dist/index.js",
--      "require": "./dist/index.cjs",
-+      "require": "./dist/index.js",
-       "default": "./dist/index.js"
-     },
-     "./package.json": "./package.json"
 diff --git a/dist/index.js b/dist/index.js
-index 7c1d722..1d0bc27 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -1,7 +1,7 @@
@@ -50,7 +36,7 @@ index 7c1d722..1d0bc27 100644
      }
    } catch {
    }
-@@ -264,6 +274,7 @@ function snakeToCamel(obj) {
+@@ -262,6 +272,7 @@ function snakeToCamel(obj) {
    return result;
  }
  function readCString(ptr) {
@@ -58,7 +44,7 @@ index 7c1d722..1d0bc27 100644
    if (isNullPointer(ptr)) return null;
    try {
      const [str] = restorePointer({
-@@ -429,9 +440,9 @@ function ffiDestroy(handle) {
+@@ -426,9 +437,9 @@ function ffiDestroy(handle) {
    });
  }
  var FFF_FILE_ITEM_STRUCT = {
@@ -71,8 +57,8 @@ index 7c1d722..1d0bc27 100644
    size: DataType.U64,
    modified: DataType.U64,
    access_frecency_score: DataType.I64,
-@@ -449,7 +460,7 @@ var FFF_SCORE_STRUCT = {
-    current_file_penalty: DataType.I32,
+@@ -446,7 +457,7 @@ var FFF_SCORE_STRUCT = {
+   current_file_penalty: DataType.I32,
    combo_match_boost: DataType.I32,
    exact_match: DataType.U8,
 -  match_type: DataType.External
@@ -80,7 +66,7 @@ index 7c1d722..1d0bc27 100644
  };
  var FFF_SEARCH_RESULT_STRUCT = {
    items: DataType.External,
-@@ -465,8 +476,8 @@ var FFF_SEARCH_RESULT_STRUCT = {
+@@ -462,8 +473,8 @@ var FFF_SEARCH_RESULT_STRUCT = {
    location_end_col: DataType.I32
  };
  var FFF_DIR_ITEM_STRUCT = {
@@ -91,7 +77,7 @@ index 7c1d722..1d0bc27 100644
    max_access_frecency: DataType.I32
  };
  var FFF_DIR_SEARCH_RESULT_STRUCT = {
-@@ -478,9 +489,9 @@ var FFF_DIR_SEARCH_RESULT_STRUCT = {
+@@ -475,9 +486,9 @@ var FFF_DIR_SEARCH_RESULT_STRUCT = {
  };
  var FFF_MIXED_ITEM_STRUCT = {
    item_type: DataType.U8,
@@ -104,7 +90,7 @@ index 7c1d722..1d0bc27 100644
    size: DataType.U64,
    modified: DataType.U64,
    access_frecency_score: DataType.I64,
-@@ -503,10 +514,10 @@ var FFF_MIXED_SEARCH_RESULT_STRUCT = {
+@@ -500,10 +511,10 @@ var FFF_MIXED_SEARCH_RESULT_STRUCT = {
    location_end_col: DataType.I32
  };
  var FFF_GREP_MATCH_STRUCT = {
@@ -119,7 +105,7 @@ index 7c1d722..1d0bc27 100644
    match_ranges: DataType.External,
    context_before: DataType.External,
    context_after: DataType.External,
-@@ -601,18 +612,13 @@ function readMixedItemFromRaw(raw) {
+@@ -598,18 +609,13 @@ function readMixedItemFromRaw(raw) {
  }
  function callAccessor(funcName, resultPtr, index, structDef) {
    loadLibrary();
@@ -140,7 +126,7 @@ index 7c1d722..1d0bc27 100644
  }
  function ptrOffset(base, bytes) {
    return load({
-@@ -769,6 +775,7 @@ function parseSearchResult(rawPtr) {
+@@ -766,6 +772,7 @@ function parseSearchResult(rawPtr) {
    }
    const items = [];
    const scores = [];
@@ -148,7 +134,7 @@ index 7c1d722..1d0bc27 100644
    for (let i = 0; i < count; i++) {
      const rawItem = callAccessor(
        "fff_search_result_get_item",
-@@ -777,13 +784,15 @@ function parseSearchResult(rawPtr) {
+@@ -774,13 +781,15 @@ function parseSearchResult(rawPtr) {
        FFF_FILE_ITEM_STRUCT
      );
      items.push(readFileItemFromRaw(rawItem));
@@ -171,7 +157,7 @@ index 7c1d722..1d0bc27 100644
    }
    load({
      library: LIBRARY_KEY,
-@@ -827,6 +836,7 @@ function parseDirSearchResult(rawPtr) {
+@@ -824,6 +833,7 @@ function parseDirSearchResult(rawPtr) {
    const count = sr.count;
    const items = [];
    const scores = [];
@@ -179,7 +165,7 @@ index 7c1d722..1d0bc27 100644
    for (let i = 0; i < count; i++) {
      const rawItem = callAccessor(
        "fff_dir_search_result_get_item",
-@@ -835,13 +845,15 @@ function parseDirSearchResult(rawPtr) {
+@@ -832,13 +842,15 @@ function parseDirSearchResult(rawPtr) {
        FFF_DIR_ITEM_STRUCT
      );
      items.push(readDirItemFromRaw(rawItem));
@@ -202,7 +188,7 @@ index 7c1d722..1d0bc27 100644
    }
    load({
      library: LIBRARY_KEY,
-@@ -900,6 +912,7 @@ function parseMixedSearchResult(rawPtr) {
+@@ -897,6 +909,7 @@ function parseMixedSearchResult(rawPtr) {
    }
    const items = [];
    const scores = [];
@@ -210,7 +196,7 @@ index 7c1d722..1d0bc27 100644
    for (let i = 0; i < count; i++) {
      const rawItem = callAccessor(
        "fff_mixed_search_result_get_item",
-@@ -908,13 +921,15 @@ function parseMixedSearchResult(rawPtr) {
+@@ -905,13 +918,15 @@ function parseMixedSearchResult(rawPtr) {
        FFF_MIXED_ITEM_STRUCT
      );
      items.push(readMixedItemFromRaw(rawItem));

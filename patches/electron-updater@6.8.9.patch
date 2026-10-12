@@ -1,7 +1,7 @@
 diff --git a/out/NsisUpdater.js b/out/NsisUpdater.js
 --- a/out/NsisUpdater.js
 +++ b/out/NsisUpdater.js
-@@ -27,9 +27,30 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
+@@ -27,10 +27,31 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
              this._verifyUpdateCodeSignature = value;
          }
      }

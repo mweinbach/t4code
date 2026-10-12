@@ -17,7 +17,7 @@ diff --git a/lib/windowsConoutConnection.js b/lib/windowsConoutConnection.js
 diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
 --- a/lib/windowsPtyAgent.js
 +++ b/lib/windowsPtyAgent.js
-@@ -218,14 +218,29 @@
+@@ -218,13 +218,31 @@
              return Promise.resolve([]);
          }
          return new Promise(function (resolve) {
